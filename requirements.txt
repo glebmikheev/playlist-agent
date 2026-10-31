@@ -1,0 +1,5 @@
+google-genai==2.34.0
+gradio==6.31.0
+langgraph==1.2.19
+pydantic==2.14.2
+python-dotenv==1.2.4

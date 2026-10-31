@@ -1,0 +1,132 @@
+# Proposed request contract
+
+This is a design contract, not an implemented parser. The LLM interprets the
+request into typed intent and preferences; code resolves references against the
+catalogue, applies edits, validates parameters and checks the resulting playlist.
+
+## Fields to interpret
+
+| Field | Meaning and interpretation |
+| --- | --- |
+| `action` | `create`, `edit` or `clarify`. For edits, identify the affected phase, selected tracks or whole playlist. |
+| `length.target_duration_s`, `length.tolerance_s`, `length.target_track_count` | Requested duration and/or track count. Internal time units are seconds. Duration tolerance defaults to 180 seconds and is shown as a default. Ask if neither duration nor count can be obtained from the request/current spec. |
+| `semantic_brief` | Preserve activity, mood, imagery and stylistic intent in words, for example "electronic music for a rainy evening walk". This text informs LLM relevance ranking. |
+| `genres.preferred`, `genres.allowed`, `genres.excluded` | Ordinary genre requests are preferences. "Only" creates an allowed set, with OR semantics inside that set. Exclusions are hard constraints. Map broad terms to supported catalogue labels and show material inferred mappings. |
+| `artists.reference`, `artists.excluded`, `artists.only` | Reference artists guide musical similarity and do not restrict the pool to those artists. `only` is populated only for an explicit restriction. Resolve names with code and ask about ambiguous identities when needed. |
+| `phases` | Up to three stable phase IDs, durations and semantic descriptions. Optional energy/valence targets in [0,1], BPM ranges and vocal/instrumental preferences. Inferred feature targets are soft proxies. Explicit strict numeric feature ranges may be hard constraints. Phase durations must reconcile with total duration. |
+| `diversity.preference`, `diversity.max_tracks_per_artist` | A qualitative diversity preference plus an optional explicit cap. "No repeated artists" means a hard cap of 1; "at most two" means 2. The ordinary default is balanced diversity with a soft repeat penalty and no invented hard cap. Count every credited artist. |
+| `content.explicit` | `allow` or `exclude`, according to catalogue metadata; default `allow`. Vocal preferences use instrumentalness as a proxy, not verified lyric/audio analysis. |
+| `tracks.keep_refs`, `tracks.exclude_refs` | References to tracks to retain or remove. Accept existing table selections/positions, Spotify links or names; resolve real IDs in code. The LLM must not invent IDs. Keeping a track preserves its presence, not its exact position. |
+| `assumptions`, `unverifiable_requests`, `clarification_question` | Separate explicit wishes, defaults and inferred interpretations. Record requirements unsupported by the catalogue, such as verified lyric language or year when unavailable. Ask rather than silently claim that a hard unsupported condition is satisfied. |
+
+Keep implementation parameters outside the parsed musical specification: SQL,
+candidate limits, scoring weights, LLM model settings, polish counter, thread ID
+and credentials belong to the application.
+
+## Worked interpretation
+
+Input: "50 minutes of electronic music for a walk. Start relaxed, make the middle
+more energetic, and keep the final 10 minutes calm. No repeated artists."
+
+The following is a proposed interpretation before catalogue label resolution.
+The first two phase durations and numeric energy targets are visible inferences,
+not numbers explicitly supplied by the user.
+
+```json
+{
+  "action": "create",
+  "length": {
+    "target_duration_s": 3000,
+    "tolerance_s": 180,
+    "target_track_count": null
+  },
+  "semantic_brief": "Electronic music for a walk: relaxed start, energetic middle, calm final ten minutes.",
+  "genres": {
+    "preferred": ["electronic"],
+    "allowed": null,
+    "excluded": []
+  },
+  "artists": {
+    "reference": [],
+    "excluded": [],
+    "only": null
+  },
+  "phases": [
+    {"id": "start", "duration_s": 600, "description": "relaxed", "energy_target": 0.3},
+    {"id": "middle", "duration_s": 1800, "description": "energetic", "energy_target": 0.7},
+    {"id": "ending", "duration_s": 600, "description": "calm", "energy_target": 0.2}
+  ],
+  "diversity": {"preference": "balanced", "max_tracks_per_artist": 1},
+  "content": {"explicit": "allow"},
+  "tracks": {"keep_refs": [], "exclude_refs": []},
+  "assumptions": [
+    {"field": "length.tolerance_s", "origin": "default", "value": 180},
+    {"field": "phases.start.duration_s", "origin": "inferred", "value": 600},
+    {"field": "phases.middle.duration_s", "origin": "inferred", "value": 1800},
+    {"field": "phases.energy_target", "origin": "inferred", "value": [0.3, 0.7, 0.2]}
+  ],
+  "unverifiable_requests": [],
+  "clarification_question": null
+}
+```
+
+With no phase request, use one phase. An edit updates only supplied fields.
+Omission preserves a current value; explicit removal clears an optional
+preference. List additions/removals must be represented as typed operations or
+resolved against the current list, rather than accidentally replacing it.
+
+## Relevance and diversity
+
+Retrieve broadly under hard constraints, then produce a feature-ranked,
+artist-balanced shortlist of about 20-30 candidates per phase. An LLM
+`rank_candidates` node judges semantic fit to the brief, phase descriptions and
+reference artists from the supplied track/artist/genre metadata and audio-feature
+values. It returns only valid candidate IDs and relative relevance scores; those
+scores are not calibrated probabilities. Unknown musical or lyrical properties
+must not become factual explanations.
+
+Python assembles the playlist using this relevance signal alongside duration,
+feature targets, transitions and diversity. Allocate the candidate budget across
+artists before the final selection, use soft repetition penalties in ordinary
+requests, and apply a hard per-artist cap when explicitly requested. Expand or
+refill a depleted candidate pool before returning a shortage. Broaden soft genre
+or reference-artist preferences as appropriate, while retaining hard exclusions,
+explicit "only" filters, caps and locks.
+
+The normal path has two LLM calls: interpretation and bounded relevance ranking.
+Polish first reuses scored candidates. Pool expansion may require one further
+bounded ranking call within the overall attempt budget.
+
+## Conversation persistence
+
+Gradio session memory alone is temporary. For the local MVP, save a JSON snapshot
+per conversation after each completed turn. Include a schema version, current
+spec, accepted playlist IDs, messages and pending clarification. Write a temporary
+file in the same directory and replace the snapshot; serialize writes within a
+conversation. The UI retains the conversation ID or lets the user reopen a saved
+conversation. Reset transient per-request fields explicitly. This restores
+completed turns; resuming within a graph step can use a checkpointer later.
+Cross-conversation preference learning is separate work.
+
+## Spotify connection
+
+Add Spotify authorization and playlist saving at the end of implementation.
+The user connects through Spotify's authorization page (Authorization Code with
+PKCE), then the application receives access/refresh tokens through its callback.
+A user-supplied `.spotify-token` file is not part of the normal flow. Register the
+developer application and redirect URI, request only scopes needed for the
+selected feature, and store tokens separately from conversation snapshots and prompts.
+
+Potential later features include catalogue search/metadata, reading the user's
+own accessible playlists, reading authorized top/recently played items to seed
+preferences, and creating/updating the user's playlists. Actual endpoint access
+depends on app mode and granted scopes. The app's available catalogue remains
+the source of audio features for the MVP.
+
+References:
+
+- [LangGraph persistence](https://docs.langchain.com/oss/python/langgraph/persistence)
+- [Spotify Authorization Code with PKCE](https://developer.spotify.com/documentation/web-api/tutorials/code-pkce-flow)
+- [Spotify top items](https://developer.spotify.com/documentation/web-api/reference/get-users-top-artists-and-tracks)
+- [Spotify recently played](https://developer.spotify.com/documentation/web-api/reference/get-recently-played)
+- [Spotify development-mode API changes](https://developer.spotify.com/documentation/web-api/references/changes/february-2026)
