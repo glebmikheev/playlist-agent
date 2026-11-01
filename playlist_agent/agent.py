@@ -112,7 +112,7 @@ def make_graph(catalogue, model, events):
         fixed = {phase.id: [] for phase in spec.phases}
         frozen, protected = [], []
         current = state["current_spec"]
-        exclude = {"phases", "semantic_brief", "assumptions"}
+        exclude = {"phases", "semantic_brief", "assumptions", "locked_track_ids"}
         if (
             current
             and parsed.action == "edit"
