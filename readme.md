@@ -4,8 +4,9 @@ Build and revise a playlist from a natural-language request. The agent interpret
 the request, retrieves real tracks, ranks their relevance with an LLM, then fits
 the playlist to the requested duration and constraints.
 
-The application is still at the design stage. Catalogue EDA is available.
-Development proceeds in three stages:
+The local application includes a SQLite catalogue, Gemini interpretation and
+ranking, a LangGraph workflow, JSON conversation storage, a Gradio interface,
+energy plots and CSV/JSON export. Development proceeds in three stages:
 
 1. Build a local Gemini-powered MVP: generation, edits, validation, polish,
    plotting and export. It needs a Gemini API key, without deploying Cloud Run,
@@ -20,19 +21,56 @@ local entry point do not import the cloud application or its infrastructure SDKs
 Spotify OAuth and saving come at the end of implementation. MPD continuation
 evaluation remains a separate recommendation experiment.
 
+## Run locally
+
+Use Python 3.12. From the repository root:
+
+```powershell
+python -m venv .venv
+.venv\Scripts\python.exe -m pip install -r requirements.lock
+.venv\Scripts\python.exe prepare_data.py --download
+Copy-Item .env.example .env
+```
+
+If `.env` already exists, keep it. Set `GEMINI_API_KEY` and `GEMINI_MODEL` in that
+file, then start the app:
+
+```powershell
+.venv\Scripts\python.exe app.py
+```
+
+Open http://127.0.0.1:7860. The default model is `gemini-3.1-flash-lite`; the
+configured model is used without automatic fallback. The local app listens only
+on loopback. The key stays on the server and is excluded from saved sessions,
+exports and version control. Use a Gemini project on Free tier for free API use;
+application limits cannot change an account's provider billing settings.
+
+The prepared database contains 89,740 tracks and occupies about 44.5 MiB.
+`prepare_data.py` checks the pinned CSV checksum before importing. Downloading
+and preparing data are separate from application startup.
+
+Create a playlist, inspect its interpretation and energy profile, then describe
+an edit. Use the track selector to retain particular tracks. Completed turns
+are saved under `data/sessions/`; choose a saved dialogue to reopen it after
+restart. This local UI shares its saved-dialogue list with whoever can access
+the process; the public deployment needs its own access and session handling.
+
 ## Request parameters
 
 Times use seconds internally. Optional musical preferences remain unset unless
 supplied or shown as an inference. A create request needs a duration or track
 count; an edit can inherit them from the current playlist.
+The model returns an `Interpretation`: `action`, `edit_scope`, a partial `update`,
+track references, assumptions and any clarification. The musical fields below
+are inside `update`; the accepted `PlaylistSpec` stores their merged values.
 
 | Field | Type / values | Meaning |
 | --- | --- | --- |
 | `action` | `create`, `edit`, `clarify` | Create a playlist, change it, or ask a necessary question. |
-| `edit_scope` | whole playlist, phase ID or track references | Identify the part affected by an edit. |
-| `length.target_duration_s` | positive integer or `null` | Target playback duration. |
-| `length.tolerance_s` | non-negative integer | Allowed duration error; default 180 seconds, shown to the user. |
-| `length.target_track_count` | positive integer or `null` | Requested number of tracks. If duration and count are both supplied, retain both. |
+| `edit_scope` | `all` or an existing phase ID | Identify the part affected by an edit. Track references are separate. |
+| `length.target_duration_s` | integer 60–43,200 or `null` | Target playback duration. |
+| `length.tolerance_s` | integer 0–1,800 | Allowed duration error; default 180 seconds, shown to the user. |
+| `length.target_track_count` | integer 1–100 or `null` | Requested number of tracks. If duration and count are both supplied, retain both. |
 | `semantic_brief` | string | Activity, mood and stylistic intent for LLM relevance ranking. |
 | `genres.preferred` | list of labels | Soft genre preferences. |
 | `genres.allowed` | list of labels or `null` | Explicit "only" restriction; any label in the list may match. |
@@ -40,7 +78,7 @@ count; an edit can inherit them from the current playlist.
 | `artists.reference` | list of names | Style/similarity references, such as "in the style of Bonobo". |
 | `artists.only` | list of names or `null` | Explicit restriction to these artists. |
 | `artists.excluded` | list of names | Artists to exclude, including credited collaborators. |
-| `phases` | one to three phase objects | Each has a stable ID, duration and description. Optional targets: energy/valence in [0,1], BPM range and vocal/instrumental preference. |
+| `phases` | up to three phase objects | Each has a stable ID, duration and description. Optional targets: energy/valence in [0,1], BPM range and vocal/instrumental preference. With no phases, code adds one. |
 | `diversity.preference` | low, balanced or high | Soft preference for artist variety; default balanced. |
 | `diversity.max_tracks_per_artist` | positive integer or `null` | An explicit hard cap. "No repeated artists" means 1. |
 | `content.explicit` | allow or exclude | Filter using the catalogue's explicit flag; default allow. |
@@ -64,14 +102,26 @@ are application settings rather than parameters extracted from musical requests.
 
 ## Workflow and persistence
 
-`interpret → retrieve → rank_candidates → assemble → validate → render`
+`interpret → retrieve → rank → assemble → validate`
 
 The normal path calls an LLM for interpretation and bounded relevance ranking.
 Python assembles the playlist and checks duration, exclusions, artist caps and
-locks. Polish corrects violations and returns to validation, with at most two
-attempts. A failing candidate does not replace the accepted playlist.
+locks. Polish makes bounded local duration adjustments and returns to validation,
+with at most two attempts per candidate pool. If validation still fails, the
+graph may expand the pool once and rank again. It uses at most three generations
+per run, with no SDK retries. A failing candidate does not replace the accepted
+playlist. A phase edit retains the other phases' tracks when global constraints
+are unchanged. Locks preserve presence; they do not fix a track's position.
 Viewing a saved playlist, rendering its graph and exporting it reuse the result
 without another model call.
+
+Each generation has a token-count preflight. Initial local settings are 24,000
+input tokens, 4,096 output tokens, low thinking for Gemini 3.x and a 180-second
+agent deadline. Numeric `GEMINI_THINKING_BUDGET` applies to Gemini 2.5;
+`GEMINI_THINKING_LEVEL` applies to 3.x. Requests are limited to 2,000 characters.
+These are measurement settings, not the final public-demo budget. API failures
+return a message and preserve the last accepted playlist. Missing provider usage
+is recorded as unknown rather than zero.
 
 Candidate retrieval balances artists before ranking. Ordinary requests use a
 soft repeat penalty; explicit caps remain hard. Refill the candidate pool before
@@ -120,10 +170,44 @@ missing/invalid values, duplicate conflicts, coverage and feature plots.
 It generates findings, summary JSON and figures locally in `reports/eda_v2/`.
 That directory is ignored and is not required as input to the notebook.
 
-## Remaining implementation
+## Local evaluation
 
-Start with the local catalogue, Gemini integration, graph and UI. Use a small,
-quota-aware local evaluation before setting cloud resource and token budgets.
-Cloud deployment follows those measurements. The [design](playlist-agent-mvp-design.md)
-records the workflow, and [cloud notes](docs/cloud-demo.md) record deferred
-deployment choices.
+Run checks against the real catalogue without model calls:
+
+```powershell
+.venv\Scripts\python.exe evaluate.py
+```
+
+Ten scenarios cover duration, 50/80-track selection, genre/content filters, artist
+caps and impossible requests. These checks measure the selection tools, not
+natural-language understanding or recommendation quality. Reports are local
+under the ignored `reports/` directory.
+
+An explicit live batch consumes Gemini quota:
+
+```powershell
+.venv\Scripts\python.exe evaluate.py --live --case six_tracks
+.venv\Scripts\python.exe evaluate.py --live --limit 3
+```
+
+The three-case batch includes a small request, a 50-minute profile and 80 tracks.
+It records parsed length, constraint results, stage timings and provider token
+usage. Compare `--thinking-level minimal` with `--thinking-level low` on the same
+cases; use `--output` to retain separate reports. Review musical relevance by
+hand as described in [evaluation notes](docs/evaluation.md).
+
+Current verification: the ten offline scenarios pass. Real generation attempts
+on 4 November 2026 returned provider 503/504 errors, including a minimal JSON
+probe. Model metadata and token counting succeeded. Full live generation,
+semantic quality and successful-run latency remain unverified. A token-count
+probe measured about 18,833 input tokens for the 348-candidate, 80-track ranking
+prompt; it was not a successful recommendation run.
+
+## Next milestones
+
+Complete live evaluation when the configured model is available, then tune
+thinking, prompt/pool size and output allowance. Choose cloud quotas from those
+measurements and build the independent GCP entry point. Spotify connection and
+playlist saving follow the core demo. The [design](playlist-agent-mvp-design.md)
+records the original scope; [cloud notes](docs/cloud-demo.md) record deferred
+deployment choices. MPD remains a later continuation experiment.

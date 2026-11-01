@@ -1,14 +1,17 @@
-# Proposed request contract
+# Request contract
 
-This is a design contract, not an implemented parser. The LLM interprets the
-request into typed intent and preferences; code resolves references against the
+The Pydantic models in `playlist_agent/models.py` define the implemented contract.
+Gemini interprets the request into typed intent and preferences; code resolves references against the
 catalogue, applies edits, validates parameters and checks the resulting playlist.
+Its response is an `Interpretation`, containing a partial `update`. Applying that
+update produces the accepted `PlaylistSpec`. The table uses paths relative to
+`update` for musical fields.
 
 ## Fields to interpret
 
 | Field | Meaning and interpretation |
 | --- | --- |
-| `action` | `create`, `edit` or `clarify`. For edits, identify the affected phase, selected tracks or whole playlist. |
+| `action`, `edit_scope`, `replace_phases` | `create`, `edit` or `clarify`. Scope is `all` or an existing phase ID. Phase edits merge by stable ID; set `replace_phases` to replace or remove the phase structure. |
 | `length.target_duration_s`, `length.tolerance_s`, `length.target_track_count` | Requested duration and/or track count. Internal time units are seconds. Duration tolerance defaults to 180 seconds and is shown as a default. Ask if neither duration nor count can be obtained from the request/current spec. |
 | `semantic_brief` | Preserve activity, mood, imagery and stylistic intent in words, for example "electronic music for a rainy evening walk". This text informs LLM relevance ranking. |
 | `genres.preferred`, `genres.allowed`, `genres.excluded` | Ordinary genre requests are preferences. "Only" creates an allowed set, with OR semantics inside that set. Exclusions are hard constraints. Map broad terms to supported catalogue labels and show material inferred mappings. |
@@ -28,42 +31,35 @@ and credentials belong to the application.
 Input: "50 minutes of electronic music for a walk. Start relaxed, make the middle
 more energetic, and keep the final 10 minutes calm. No repeated artists."
 
-The following is a proposed interpretation before catalogue label resolution.
+The following is a valid interpretation using a supported catalogue label.
 The first two phase durations and numeric energy targets are visible inferences,
 not numbers explicitly supplied by the user.
 
 ```json
 {
   "action": "create",
-  "length": {
-    "target_duration_s": 3000,
-    "tolerance_s": 180,
-    "target_track_count": null
+  "edit_scope": "all",
+  "replace_phases": false,
+  "update": {
+    "length": {
+      "target_duration_s": 3000,
+      "tolerance_s": 180
+    },
+    "semantic_brief": "Electronic music for a walk: relaxed start, energetic middle, calm final ten minutes.",
+    "genres": {"preferred": ["electronic"]},
+    "phases": [
+      {"id": "start", "duration_s": 600, "description": "relaxed", "energy_target": 0.3},
+      {"id": "middle", "duration_s": 1800, "description": "energetic", "energy_target": 0.7},
+      {"id": "ending", "duration_s": 600, "description": "calm", "energy_target": 0.2}
+    ],
+    "diversity": {"max_tracks_per_artist": 1}
   },
-  "semantic_brief": "Electronic music for a walk: relaxed start, energetic middle, calm final ten minutes.",
-  "genres": {
-    "preferred": ["electronic"],
-    "allowed": null,
-    "excluded": []
-  },
-  "artists": {
-    "reference": [],
-    "excluded": [],
-    "only": null
-  },
-  "phases": [
-    {"id": "start", "duration_s": 600, "description": "relaxed", "energy_target": 0.3},
-    {"id": "middle", "duration_s": 1800, "description": "energetic", "energy_target": 0.7},
-    {"id": "ending", "duration_s": 600, "description": "calm", "energy_target": 0.2}
-  ],
-  "diversity": {"preference": "balanced", "max_tracks_per_artist": 1},
-  "content": {"explicit": "allow"},
   "tracks": {"keep_refs": [], "exclude_refs": []},
   "assumptions": [
-    {"field": "length.tolerance_s", "origin": "default", "value": 180},
-    {"field": "phases.start.duration_s", "origin": "inferred", "value": 600},
-    {"field": "phases.middle.duration_s", "origin": "inferred", "value": 1800},
-    {"field": "phases.energy_target", "origin": "inferred", "value": [0.3, 0.7, 0.2]}
+    {"field": "length.tolerance_s", "origin": "default", "value": "180 seconds"},
+    {"field": "phases.start.duration_s", "origin": "inferred", "value": "600 seconds"},
+    {"field": "phases.middle.duration_s", "origin": "inferred", "value": "1800 seconds"},
+    {"field": "phases.energy_target", "origin": "inferred", "value": "0.3 → 0.7 → 0.2"}
   ],
   "unverifiable_requests": [],
   "clarification_question": null
@@ -73,16 +69,38 @@ not numbers explicitly supplied by the user.
 With no phase request, use one phase. An edit updates only supplied fields.
 Omission preserves a current value; explicit removal clears an optional
 preference. List additions/removals must be represented as typed operations or
-resolved against the current list, rather than accidentally replacing it.
+resolved against the current list. This implementation sends the resulting list
+in the patch. For example, "make the middle calmer" can produce:
+
+```json
+{
+  "action": "edit",
+  "edit_scope": "middle",
+  "update": {"phases": [{"id": "middle", "energy_target": 0.45}]}
+}
+```
+
+This preserves duration, artist caps, exclusions and the other phase definitions.
+If global constraints are unchanged, the workflow also retains tracks from the
+unaffected phases. `tracks.keep_refs` resolves to persistent `locked_track_ids`;
+`tracks.exclude_refs` resolves to `excluded_track_ids`. The model cannot set
+those internal ID lists directly. Conflicting locks and exclusions need a user
+decision rather than silently dropping a rule.
+
+Durations are limited to 60–43,200 seconds, track counts to 1–100, and duration
+tolerance to 0–1,800 seconds. Optional strict `hard_feature_ranges` support
+`energy`, `valence`, `tempo`, `instrumentalness`, `acousticness` and `danceability`.
+Code independently checks strict ranges against every phase a track overlaps.
 
 ## Relevance and diversity
 
 Retrieve broadly under hard constraints, then produce a feature-ranked,
-artist-balanced shortlist of about 20-30 candidates per phase. An LLM
-`rank_candidates` node judges semantic fit to the brief, phase descriptions and
+artist-balanced shortlist sized for the requested playlist, initially 30–180
+candidates per phase. An LLM `rank` node judges semantic fit to the brief, phase descriptions and
 reference artists from the supplied track/artist/genre metadata and audio-feature
-values. It returns only valid candidate IDs and relative relevance scores; those
-scores are not calibrated probabilities. Unknown musical or lyrical properties
+values. It returns a complete order of short integer aliases per phase. Code
+rejects omitted, duplicate or invented aliases, resolves real IDs and converts
+the order to relative scores. Those scores are not calibrated probabilities. Unknown musical or lyrical properties
 must not become factual explanations.
 
 Python assembles the playlist using this relevance signal alongside duration,
@@ -95,7 +113,11 @@ explicit "only" filters, caps and locks.
 
 The normal path has two LLM calls: interpretation and bounded relevance ranking.
 Polish first reuses scored candidates. Pool expansion may require one further
-bounded ranking call within the overall attempt budget.
+bounded ranking call within the overall attempt budget. Pool expansion occurs
+at most once and is capped at 400 candidates across mutable phases. If its input
+exceeds the configured token limit, generation is declined. There are no hidden
+SDK retries or model fallbacks. Polish uses no LLM calls and makes local
+duration adjustments; it cannot guarantee a solution to incompatible conditions.
 
 ## Conversation persistence
 
