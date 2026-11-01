@@ -252,7 +252,7 @@ def validate_playlist(spec, ids, catalogue):
     }
 
 
-def polish_playlist(spec, ids, pools, catalogue, protected_ids=()):
+def polish_playlist(spec, ids, pools, catalogue, protected_ids=(), frozen_phases=()):
     tracks = catalogue.tracks(ids)
     target = spec.length.target_duration_s
     if target is None:
@@ -301,7 +301,18 @@ def polish_playlist(spec, ids, pools, catalogue, protected_ids=()):
                 ):
                     best, best_error = ("swap", index, new), distance
         if spec.length.target_track_count is None:
-            for pool in pools.values():
+            for phase_id, pool in pools.items():
+                if phase_id in frozen_phases:
+                    continue
+                phase_end = next(
+                    end for phase, _, end in schedule if phase.id == phase_id
+                )
+                elapsed, position = 0, 0
+                for track in tracks:
+                    if elapsed + track["duration_ms"] / 2 >= phase_end:
+                        break
+                    elapsed += track["duration_ms"]
+                    position += 1
                 for new in pool:
                     distance = abs(duration + new["duration_ms"] - target_ms)
                     if (
@@ -310,8 +321,9 @@ def polish_playlist(spec, ids, pools, catalogue, protected_ids=()):
                         and _fits_artist_cap(
                             new, counts, spec.diversity.max_tracks_per_artist
                         )
+                        and track_allowed(new, spec, phase_by_id[phase_id])
                     ):
-                        best, best_error = ("add", len(tracks), new), distance
+                        best, best_error = ("add", position, new), distance
         if best is None:
             break
         action, index, new = best
@@ -320,5 +332,5 @@ def polish_playlist(spec, ids, pools, catalogue, protected_ids=()):
         elif action == "swap":
             tracks[index] = new
         else:
-            tracks.append(new)
+            tracks.insert(index, new)
     return [track["track_id"] for track in tracks]
