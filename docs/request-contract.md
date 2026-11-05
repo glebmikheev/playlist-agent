@@ -11,8 +11,8 @@ update produces the accepted `PlaylistSpec`. The table uses paths relative to
 
 | Field | Meaning and interpretation |
 | --- | --- |
-| `action`, `edit_scope`, `replace_phases` | `create`, `edit` or `clarify`. Scope is `all` or an existing phase ID. Phase edits merge by stable ID; set `replace_phases` to replace or remove the phase structure. |
-| `length.target_duration_s`, `length.tolerance_s`, `length.target_track_count` | Requested duration and/or track count. Internal time units are seconds. Duration tolerance defaults to 180 seconds and is shown as a default. Ask if neither duration nor count can be obtained from the request/current spec. |
+| `action`, `edit_scope`, `replace_phases` | `create`, `edit`, `clarify` or `reject`. Scope is `all` or an existing phase ID. Phase edits merge by stable ID; set `replace_phases` to replace or remove the phase structure. |
+| `length.target_duration_s`, `length.tolerance_before_s`, `length.tolerance_after_s`, `length.target_track_count` | Requested duration and/or track count. Internal time units are seconds. Default permitted shortfall is 180 seconds and overrun is 300 seconds. Ask if neither duration nor count can be obtained from the request/current spec. |
 | `semantic_brief` | Preserve activity, mood, imagery and stylistic intent in words, for example "electronic music for a rainy evening walk". This text informs LLM relevance ranking. |
 | `genres.preferred`, `genres.allowed`, `genres.excluded` | Ordinary genre requests are preferences. "Only" creates an allowed set, with OR semantics inside that set. Exclusions are hard constraints. Map broad terms to supported catalogue labels and show material inferred mappings. |
 | `artists.reference`, `artists.excluded`, `artists.only` | Reference artists guide musical similarity and do not restrict the pool to those artists. `only` is populated only for an explicit restriction. Resolve names with code and ask about ambiguous identities when needed. |
@@ -38,12 +38,14 @@ not numbers explicitly supplied by the user.
 ```json
 {
   "action": "create",
+  "moderation": {"decision": "allow", "category": "none"},
   "edit_scope": "all",
   "replace_phases": false,
   "update": {
     "length": {
       "target_duration_s": 3000,
-      "tolerance_s": 180
+      "tolerance_before_s": 180,
+      "tolerance_after_s": 300
     },
     "semantic_brief": "Electronic music for a walk: relaxed start, energetic middle, calm final ten minutes.",
     "genres": {"preferred": ["electronic"]},
@@ -56,7 +58,7 @@ not numbers explicitly supplied by the user.
   },
   "tracks": {"keep_refs": [], "exclude_refs": []},
   "assumptions": [
-    {"field": "length.tolerance_s", "origin": "default", "value": "180 seconds"},
+    {"field": "length.tolerance", "origin": "default", "value": "180 seconds shorter / 300 seconds longer"},
     {"field": "phases.start.duration_s", "origin": "inferred", "value": "600 seconds"},
     {"field": "phases.middle.duration_s", "origin": "inferred", "value": "1800 seconds"},
     {"field": "phases.energy_target", "origin": "inferred", "value": "0.3 → 0.7 → 0.2"}
@@ -75,6 +77,7 @@ in the patch. For example, "make the middle calmer" can produce:
 ```json
 {
   "action": "edit",
+  "moderation": {"decision": "allow", "category": "none"},
   "edit_scope": "middle",
   "update": {"phases": [{"id": "middle", "energy_target": 0.45}]}
 }
@@ -88,7 +91,8 @@ those internal ID lists directly. Conflicting locks and exclusions need a user
 decision rather than silently dropping a rule.
 
 Durations are limited to 60–43,200 seconds, track counts to 1–100, and duration
-tolerance to 0–1,800 seconds. Optional strict `hard_feature_ranges` support
+tolerances to 0–1,800 seconds each. Legacy snapshots using a single `tolerance_s`
+remain readable with that symmetric tolerance. Optional strict `hard_feature_ranges` support
 `energy`, `valence`, `tempo`, `instrumentalness`, `acousticness` and `danceability`.
 Code independently checks strict ranges against every phase a track overlaps.
 
@@ -118,11 +122,18 @@ Polish first reuses scored candidates. Pool expansion may require one further
 bounded ranking call within the overall attempt budget. Pool expansion occurs
 at most once and is capped at 400 candidates across mutable phases. If its input
 exceeds the configured token limit, generation is declined. There are no hidden
-SDK retries or model fallbacks. One explicit retry of a 503 generation is allowed
-after a short pause, within the same three-attempt budget. Polish uses no LLM
+SDK retries or model fallbacks. Each of the three logical model operations may
+receive two additional attempts after 503. The resulting nine-attempt ceiling
+shares the overall run deadline. Unavailable runs do not use the user's local
+allowance; all physical provider attempts remain counted. Polish uses no LLM
 calls and makes local duration/profile adjustments; it cannot guarantee a
 solution to incompatible conditions. Energy deviation over 0.15 is a disclosed
 application warning threshold, not a hard requirement inferred from the request.
+
+`moderation` is required in every interpretation. A block contains a category and
+a short English reason; the action is `reject`. Missing/invalid safety decisions
+do not proceed to catalogue search. Native Gemini prompt/response safety blocks
+during interpretation also reject the input and retain available provider ratings.
 
 ## Conversation persistence
 

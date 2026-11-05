@@ -11,51 +11,51 @@ def describe_spec(spec):
     lines = []
     if length.target_duration_s is not None:
         lines.append(
-            f"{length.target_duration_s / 60:g} мин ± {length.tolerance_s / 60:g} мин"
+            f"{length.target_duration_s / 60:g} min (-{length.tolerance_before_s / 60:g}/+{length.tolerance_after_s / 60:g} min)"
         )
     if length.target_track_count is not None:
-        lines.append(f"{length.target_track_count} треков")
-    text = "**Понял запрос:** " + "; ".join(lines) + "."
+        lines.append(f"{length.target_track_count} tracks")
+    text = "**Interpreted request:** " + "; ".join(lines) + "."
     if spec.semantic_brief:
         text += "\n\n" + html.escape(spec.semantic_brief)
     limits = []
     for label, values in [
-        ("Желательно", spec.genres.preferred),
-        ("Только жанры", spec.genres.allowed),
-        ("Без жанров", spec.genres.excluded),
-        ("В духе", spec.artists.reference),
-        ("Только исполнители", spec.artists.only),
-        ("Без исполнителей", spec.artists.excluded),
+        ("Preferred genres", spec.genres.preferred),
+        ("Allowed genres", spec.genres.allowed),
+        ("Excluded genres", spec.genres.excluded),
+        ("Similar to", spec.artists.reference),
+        ("Allowed artists", spec.artists.only),
+        ("Excluded artists", spec.artists.excluded),
     ]:
         if values:
             limits.append(label + ": " + html.escape(", ".join(values)))
     if spec.diversity.max_tracks_per_artist is not None:
         limits.append(
-            f"Не больше {spec.diversity.max_tracks_per_artist} треков одного исполнителя"
+            f"At most {spec.diversity.max_tracks_per_artist} tracks per artist"
         )
     if spec.content.explicit == "exclude":
-        limits.append("Без explicit")
+        limits.append("Exclude explicit tracks")
     if spec.locked_track_ids:
-        limits.append(f"Закреплено: {len(spec.locked_track_ids)}")
+        limits.append(f"Locked: {len(spec.locked_track_ids)}")
     if limits:
         text += "\n\n" + "; ".join(limits) + "."
     phases = []
     for phase, start, end in phase_schedule(spec):
         label = html.escape(phase.description or phase.id)
         if length.target_duration_s is not None:
-            label += f" ({(end - start) / 60000:g} мин)"
+            label += f" ({(end - start) / 60000:g} min)"
         if phase.energy_target is not None:
-            label += f", энергия {phase.energy_target:g}"
+            label += f", energy {phase.energy_target:g}"
         phases.append(label)
     if len(phases) > 1 or any(phase.energy_target is not None for phase in spec.phases):
-        text += "\n\n**Профиль:** " + " → ".join(phases) + "."
+        text += "\n\n**Profile:** " + " → ".join(phases) + "."
     inferred = [
         html.escape(item.field + " = " + item.value)
         for item in spec.assumptions
         if item.origin == "inferred"
     ]
     if inferred:
-        text += "\n\n**Допущения:** " + "; ".join(inferred) + "."
+        text += "\n\n**Assumptions:** " + "; ".join(inferred) + "."
     return text
 
 
@@ -72,7 +72,7 @@ def profile_svg(spec, tracks):
         return top + height * (1 - value)
 
     parts = [
-        '<svg viewBox="0 0 800 235" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Профиль энергии по времени">'
+        '<svg viewBox="0 0 800 235" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Energy profile over playback time">'
     ]
     for value in [0, 0.25, 0.5, 0.75, 1]:
         parts.append(
@@ -98,7 +98,7 @@ def profile_svg(spec, tracks):
                 f'<line x1="{x(start)}" y1="{y(phase.energy_target)}" x2="{x(end)}" y2="{y(phase.energy_target)}" stroke="#dc2626" stroke-width="2" stroke-dasharray="7 4"/>'
             )
     parts.append(
-        '<text x="55" y="225" font-size="12" fill="#2563eb">Синий: энергия треков</text><text x="280" y="225" font-size="12" fill="#dc2626">Красный пунктир: цель</text><text x="700" y="225" font-size="12">Минуты</text></svg>'
+        '<text x="55" y="225" font-size="12" fill="#2563eb">Blue: track energy</text><text x="280" y="225" font-size="12" fill="#dc2626">Red dashed: target</text><text x="700" y="225" font-size="12">Minutes</text></svg>'
     )
     return "".join(parts)
 

@@ -6,7 +6,9 @@ the playlist to the requested duration and constraints.
 
 The local application includes a SQLite catalogue, Gemini interpretation and
 ranking, a LangGraph workflow, JSON conversation storage, a Gradio interface,
-energy plots and CSV/JSON export. Development proceeds in three stages:
+energy plots and CSV/JSON export. The interface and generated explanations use
+English only; original track and artist names are preserved. Development proceeds
+in three stages:
 
 1. Build a local Gemini-powered MVP: generation, edits, validation, polish,
    plotting and export. It needs a Gemini API key, without deploying Cloud Run,
@@ -53,7 +55,7 @@ For a local container, prepare the database first, then build and run:
 
 ```powershell
 docker build -t playlist-agent:local .
-docker run --rm -p 127.0.0.1:7860:8080 --env-file .env -v playlist-agent-sessions:/app/data/sessions playlist-agent:local
+docker run --rm -p 127.0.0.1:7860:8080 --env-file .env -v playlist-agent-sessions:/app/data/sessions -v playlist-agent-security:/app/data/security playlist-agent:local
 ```
 
 The image includes the read-only SQLite catalogue. The build context excludes
@@ -78,10 +80,10 @@ are inside `update`; the accepted `PlaylistSpec` stores their merged values.
 
 | Field | Type / values | Meaning |
 | --- | --- | --- |
-| `action` | `create`, `edit`, `clarify` | Create a playlist, change it, or ask a necessary question. |
+| `action` | `create`, `edit`, `clarify`, `reject` | Create a playlist, change it, ask a necessary question, or reject blocked content. |
 | `edit_scope` | `all` or an existing phase ID | Identify the part affected by an edit. Track references are separate. |
 | `length.target_duration_s` | integer 60–43,200 or `null` | Target playback duration. |
-| `length.tolerance_s` | integer 0–1,800 | Allowed duration error; default 180 seconds, shown to the user. |
+| `length.tolerance_before_s`, `length.tolerance_after_s` | integers 0–1,800 | Allowed shortfall and overrun; defaults 180 and 300 seconds, shown as −3/+5 minutes. Explicit user tolerances override these defaults. |
 | `length.target_track_count` | integer 1–100 or `null` | Requested number of tracks. If duration and count are both supplied, retain both. |
 | `semantic_brief` | string | Activity, mood and stylistic intent for LLM relevance ranking. |
 | `genres.preferred` | list of labels | Soft genre preferences. |
@@ -99,6 +101,7 @@ are inside `update`; the accepted `PlaylistSpec` stores their merged values.
 | `assumptions` | list of field/value/origin records | Distinguish inferred values from application defaults. |
 | `unverifiable_requests` | list of requirements | Requests unsupported by available metadata, such as verified lyric language. |
 | `clarification_question` | string or `null` | A question needed to resolve a missing or conflicting requirement. |
+| `moderation` | required decision/category/reason | Gemini's safety assessment of the current request, returned with interpretation. A blocked request ends before retrieval. |
 
 "Electronic music" is a preference; "only techno" is a restriction. "Like Bonobo"
 guides similarity; "only Bonobo" limits the artists. Numeric targets inferred from
@@ -120,10 +123,11 @@ The normal path calls an LLM for interpretation and bounded relevance ranking.
 Python assembles the playlist and checks duration, exclusions, artist caps and
 locks. Polish makes bounded local duration/profile adjustments and returns to validation,
 with at most two attempts per candidate pool. If validation still fails, the
-graph may expand the pool once and rank again. It uses at most three generations
-per run, with no SDK retries. A failed generation may receive one explicit 503
-retry after a 2–4 second pause; it counts toward those same three attempts.
-Quota errors and invalid requests are not retried. The third response still goes through assembly,
+graph may expand the pool once and rank again. It uses at most three logical
+model operations per run, with no SDK retries. A 503 can receive two explicit
+retries, after 2–4 and 4–8 seconds. This permits at most nine generation attempts
+within the unchanged agent deadline. Every physical attempt remains in metrics.
+Quota errors and invalid requests are not retried. The final ranking response still goes through assembly,
 polish and validation; the limit prevents further model calls, not completion
 of local work. A failing candidate does not replace the accepted
 playlist. A phase edit retains the other phases' tracks when global constraints
@@ -138,7 +142,17 @@ agent deadline. Numeric `GEMINI_THINKING_BUDGET` applies to Gemini 2.5;
 These are measurement settings, not the final public-demo budget. API failures
 return a message and preserve the last accepted playlist. Missing provider usage
 is recorded as unknown rather than zero.
+Unavailable runs do not increment the local user's `runs_used` counter. Physical
+provider attempts are still counted; user allowance refunds do not refund
+Google quota or the future public application's global resource budget.
 See [provider errors](docs/provider-errors.md) for the retry policy and diagnostic evidence.
+
+Moderation shares the first interpretation call. Rejected requests are not
+retrieved or ranked, and they stay out of later model context. A private audit
+database stores the classification, submitted content, connection IP and
+sanitized HTTP metadata. The UI announces this and claims logging only after
+the audit write succeeds. See [security notes](docs/security.md) for redaction,
+retention, SQL checks and the limits of model-based moderation.
 
 Polish evaluates the actual time occupied by each track in every phase. It can
 improve energy fit even when total duration already passes, while retaining hard

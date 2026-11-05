@@ -66,10 +66,17 @@ and any conversations that must survive instance replacement. The catalogue is
 read-only; no quota may rely on a local file or warm-process memory.
 
 Before calling a model, atomically reserve the run's configured worst-case token
-budget and check global/session/window/provider quotas. Every generation attempt
-counts toward the three-call ceiling, including retries. Repeated submissions
+budget and check global/session/window/provider quotas. Local settings now allow
+three logical operations with two 503 retries each: at most nine generation
+attempts under the same run deadline. Recalculate token/provider-request
+reservations with this ceiling before public deployment. Moderation is part of
+the first model operation and must also pass admission. Repeated submissions
 reuse a run ID. If the outcome of a timed-out call is unknown, retain the
 conservative reservation. If the quota store is unavailable, decline model work.
+An unavailable run may return the user's allowance, but it must not return
+already-consumed global/provider attempts or unknown token reservations. Security
+audits also need durable private storage; the local audit database inside a
+Cloud Run instance is insufficient.
 
 The API key stays server-side in a Gemini project on Free tier without linked
 paid billing. No paid model fallback or automatic billing upgrade is part of the

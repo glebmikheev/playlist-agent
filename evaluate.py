@@ -126,10 +126,11 @@ SCENARIOS = [
 def offline(catalogue):
     records = []
     for case in SCENARIOS:
-        started = time.perf_counter()
+        started_at = time.perf_counter()
         spec = PlaylistSpec.model_validate(case["spec"])
         if not spec.phases:
             spec.phases = [Phase(id="all")]
+
         pools = {
             phase.id: diverse_shortlist(catalogue.search(spec, phase, 4000), 350)
             for phase, _, _ in phase_schedule(spec)
@@ -141,7 +142,7 @@ def offline(catalogue):
                 "case": case["id"],
                 "expected_behavior": validation["passed"]
                 != case.get("expected_failure", False),
-                "seconds": round(time.perf_counter() - started, 3),
+                "seconds": round(time.perf_counter() - started_at, 3),
                 "validation": validation,
                 "playlist_ids": ids,
             }
@@ -164,13 +165,15 @@ async def live(catalogue, cases, settings):
             )
         finally:
             await client.close()
-        expected = case["spec"]["length"]
-        actual = result.get("spec", {}).get("length", {})
-        parsing = (
-            all(actual.get(key) == value for key, value in expected.items())
-            if result.get("spec")
-            else None
+
+        expected = PlaylistSpec.model_validate(case["spec"]).length.model_dump(
+            exclude_unset=True
         )
+        actual = result.get("spec", {}).get("length", {})
+        if result.get("spec"):
+            parsing = all(actual.get(key) == value for key, value in expected.items())
+        else:
+            parsing = None
         records.append(
             {
                 "case": case["id"],
@@ -180,10 +183,14 @@ async def live(catalogue, cases, settings):
             }
         )
         print(case["id"], result["status"], result["metrics"]["elapsed_s"], flush=True)
+
     successful = [
         record for record in records if record["result"]["status"] == "success"
     ]
     durations = [record["result"]["metrics"]["elapsed_s"] for record in successful]
+    all_tokens_known = all(
+        record["result"]["metrics"]["total_tokens"] is not None for record in records
+    )
     return {
         "mode": "live_gemini",
         "model": settings.model,
@@ -198,16 +205,13 @@ async def live(catalogue, cases, settings):
         "total_tokens": sum(
             record["result"]["metrics"]["total_tokens"] for record in records
         )
-        if all(
-            record["result"]["metrics"]["total_tokens"] is not None
-            for record in records
-        )
+        if all_tokens_known
         else None,
         "scope": "Small sanity sample; relevance needs human review. No MPD benchmark.",
     }
 
 
-if __name__ == "__main__":
+def main():
     parser = argparse.ArgumentParser(
         description="Run catalogue sanity checks or an explicit small Gemini batch."
     )
@@ -224,6 +228,7 @@ if __name__ == "__main__":
     parser.add_argument("--max-output-tokens", type=int)
     parser.add_argument("--output", type=Path)
     args = parser.parse_args()
+
     catalogue = Catalogue(ROOT / "data/catalogue.sqlite")
     if args.live:
         settings = Settings.load()
@@ -231,16 +236,16 @@ if __name__ == "__main__":
             settings = replace(settings, thinking_level=args.thinking_level)
         if args.max_output_tokens:
             settings = replace(settings, max_output_tokens=args.max_output_tokens)
-        selected = (
-            [case for case in SCENARIOS if case["id"] == args.case]
-            if args.case
-            else SCENARIOS[: args.limit]
-        )
+        if args.case:
+            selected = [case for case in SCENARIOS if case["id"] == args.case]
+        else:
+            selected = SCENARIOS[: args.limit]
         if not selected:
             parser.error("Select at least one case.")
         report = asyncio.run(live(catalogue, selected, settings))
     else:
         report = offline(catalogue)
+
     path = args.output or ROOT / "reports" / (
         "live_eval.json" if args.live else "tool_eval.json"
     )
@@ -250,3 +255,7 @@ if __name__ == "__main__":
         encoding="utf-8",
     )
     print(path)
+
+
+if __name__ == "__main__":
+    main()

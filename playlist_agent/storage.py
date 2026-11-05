@@ -47,33 +47,55 @@ class SessionStore:
         ):
             data = json.loads(path.read_text(encoding="utf-8"))
             spec = data.get("spec") or data.get("draft_spec") or {}
-            label = (
-                data.get("updated_at", "")[:16]
-                + " · "
-                + spec.get("semantic_brief", "Диалог")[:55]
-            )
+            timestamp = data.get("updated_at", "")[:16]
+            label = timestamp + " · " + spec.get("semantic_brief", "Conversation")[:55]
             choices.append((label, path.stem))
         return choices
 
 
 def update_snapshot(snapshot, message, result):
-    previous = set(snapshot.get("playlist_ids", []))
+    previous_ids = set(snapshot.get("playlist_ids", []))
+    context = snapshot.get("context_messages", snapshot.get("messages", []))
     snapshot["messages"] = [
         *snapshot.get("messages", []),
         {"role": "user", "content": message},
         {"role": "assistant", "content": result["message"]},
     ][-100:]
+    if result["status"] in {"success", "clarification", "failed"}:
+        context = [
+            *context,
+            {"role": "user", "content": message},
+            {"role": "assistant", "content": result["message"]},
+        ][-12:]
+    snapshot["context_messages"] = context
+
+    usage = snapshot.setdefault(
+        "usage", {"runs_used": 0, "unavailable_runs": 0, "rejected_requests": 0}
+    )
+    counts_toward_quota = result.get(
+        "counts_toward_quota",
+        result["status"] in {"success", "clarification", "failed"},
+    )
+    usage["runs_used"] += int(counts_toward_quota)
+    usage["provider_attempts"] = usage.get("provider_attempts", 0) + result.get(
+        "metrics", {}
+    ).get("llm_calls", 0)
+    usage["unavailable_runs"] += int(
+        result.get("failure_reason") == "provider_unavailable"
+    )
+    usage["rejected_requests"] += int(result["status"] == "rejected")
+
     snapshot["last_attempt"] = result
     if result["status"] == "success":
         snapshot["spec"] = result["spec"]
         snapshot["playlist_ids"] = result["playlist_ids"]
         snapshot.pop("draft_spec", None)
         snapshot.pop("pending_question", None)
-        current = set(result["playlist_ids"])
+        current_ids = set(result["playlist_ids"])
         result["changes"] = {
-            "added": len(current - previous),
-            "removed": len(previous - current),
-            "retained": len(previous & current),
+            "added": len(current_ids - previous_ids),
+            "removed": len(previous_ids - current_ids),
+            "retained": len(previous_ids & current_ids),
         }
     elif result["status"] in {"failed", "clarification"}:
         if result.get("spec"):

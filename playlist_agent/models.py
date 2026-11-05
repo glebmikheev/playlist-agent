@@ -14,8 +14,19 @@ class Model(BaseModel):
 
 class Length(Model):
     target_duration_s: int | None = Field(default=None, ge=60, le=43200)
-    tolerance_s: int = Field(default=180, ge=0, le=1800)
+    tolerance_before_s: int = Field(default=180, ge=0, le=1800)
+    tolerance_after_s: int = Field(default=300, ge=0, le=1800)
     target_track_count: int | None = Field(default=None, ge=1, le=100)
+
+    @model_validator(mode="before")
+    @classmethod
+    def read_legacy_tolerance(cls, value):
+        if isinstance(value, dict) and "tolerance_s" in value:
+            value = dict(value)
+            tolerance = value.pop("tolerance_s")
+            value.setdefault("tolerance_before_s", tolerance)
+            value.setdefault("tolerance_after_s", tolerance)
+        return value
 
 
 class Genres(Model):
@@ -115,8 +126,34 @@ class SpecPatch(Model):
     content: Content | None = None
 
 
+class Moderation(Model):
+    decision: Literal["allow", "block"]
+    category: Literal[
+        "none",
+        "harassment",
+        "hate_speech",
+        "sexually_explicit",
+        "dangerous_content",
+        "child_safety",
+        "self_harm",
+        "privacy_abuse",
+        "jailbreak",
+        "other",
+    ]
+    reason: str = Field(default="", max_length=240)
+
+    @model_validator(mode="after")
+    def check_decision(self):
+        if (self.decision == "allow") != (self.category == "none"):
+            raise ValueError(
+                "Allowed content must use category none; blocked content needs a category."
+            )
+        return self
+
+
 class Interpretation(Model):
-    action: Literal["create", "edit", "clarify"]
+    moderation: Moderation
+    action: Literal["create", "edit", "clarify", "reject"]
     edit_scope: str = "all"
     replace_phases: bool = False
     update: SpecPatch = Field(default_factory=SpecPatch)
@@ -124,6 +161,12 @@ class Interpretation(Model):
     assumptions: list[Assumption] = Field(default_factory=list)
     unverifiable_requests: list[str] = Field(default_factory=list)
     clarification_question: str | None = None
+
+    @model_validator(mode="after")
+    def check_rejection(self):
+        if self.action == "reject" and self.moderation.decision != "block":
+            raise ValueError("A reject action requires a blocked moderation decision.")
+        return self
 
 
 class PhaseRanking(Model):

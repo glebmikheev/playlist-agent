@@ -5,7 +5,7 @@ from typing import TypedDict
 
 from langgraph.graph import END, START, StateGraph
 
-from .gemini import ModelError
+from .gemini import ContentRejected, ModelError, ModelUnavailable
 from .models import Phase, PlaylistSpec, apply_interpretation, phase_schedule
 from .selection import (
     build_playlist,
@@ -34,6 +34,7 @@ class State(TypedDict, total=False):
     refilled: bool
     refill_available: bool
     clarification: str | None
+    moderation: dict
 
 
 def make_graph(catalogue, model, events):
@@ -45,16 +46,18 @@ def make_graph(catalogue, model, events):
             state["messages"],
             catalogue.vocabulary(),
         )
+        if parsed.moderation.decision == "block":
+            return {"moderation": parsed.moderation.model_dump()}
         if parsed.action == "clarify" or parsed.clarification_question:
             return {
                 "clarification": parsed.clarification_question
-                or "Уточни длительность или число треков."
+                or "Please specify a duration or track count."
             }
         if parsed.unverifiable_requests:
             return {
-                "clarification": "В каталоге нельзя проверить: "
+                "clarification": "The catalogue cannot verify: "
                 + "; ".join(parsed.unverifiable_requests)
-                + ". Можно продолжить без обязательного выполнения этих условий?"
+                + ". May I continue without treating these as mandatory requirements?"
             }
         try:
             spec = apply_interpretation(state["current_spec"], parsed)
@@ -63,7 +66,7 @@ def make_graph(catalogue, model, events):
                 and spec.length.target_track_count is None
             ):
                 return {
-                    "clarification": "На сколько минут или треков собрать плейлист?",
+                    "clarification": "How many minutes or tracks should the playlist contain?",
                     "spec": spec,
                 }
             spec.locked_track_ids = list(
@@ -91,7 +94,7 @@ def make_graph(catalogue, model, events):
             spec = PlaylistSpec.model_validate(spec.model_dump())
         except ValueError as exc:
             return {
-                "clarification": "Нужно согласовать параметры: "
+                "clarification": "These parameters need to be reconciled: "
                 + str(exc).split("\n")[0]
             }
 
@@ -100,13 +103,13 @@ def make_graph(catalogue, model, events):
             not track_allowed(track, spec) for track in locked
         ):
             return {
-                "clarification": "Закреплённые треки отсутствуют в каталоге или конфликтуют с новыми ограничениями. Какие треки разблокировать?"
+                "clarification": "Some locked tracks are missing or conflict with the new constraints. Which tracks should be unlocked?"
             }
         counts = Counter(name for track in locked for name in track["artist_names"])
         cap = spec.diversity.max_tracks_per_artist
         if cap is not None and any(count > cap for count in counts.values()):
             return {
-                "clarification": "Закреплённые треки уже превышают лимит исполнителя. Разблокировать часть треков или изменить лимит?"
+                "clarification": "Locked tracks already exceed the artist cap. Should some tracks be unlocked or the cap changed?"
             }
 
         fixed = {phase.id: [] for phase in spec.phases}
@@ -147,7 +150,7 @@ def make_graph(catalogue, model, events):
                 ]
                 if not eligible:
                     return {
-                        "clarification": f"Закреплённый трек {track['title']} не подходит ни под одну обязательную фазу."
+                        "clarification": f"The locked track {track['title']} does not fit any mandatory phase."
                     }
                 phase = min(eligible, key=lambda phase: feature_cost(track, phase))
                 fixed[phase.id].append(track)
@@ -187,7 +190,7 @@ def make_graph(catalogue, model, events):
             reserved.update(track["track_id"] for track in pools[phase.id])
             if not pools[phase.id] and phase.id not in state["frozen_phases"]:
                 return {
-                    "clarification": f"Для фазы {phase.id} не найдено треков с обязательными фильтрами. Какие ограничения можно изменить?"
+                    "clarification": f"No tracks match the mandatory filters for phase {phase.id}. Which constraints may be changed?"
                 }
         events.append(
             {
@@ -322,7 +325,7 @@ def make_graph(catalogue, model, events):
             return "polish"
         if state["validation"]["passed"]:
             return END
-        if not state["refilled"] and len(model.calls) < 3:
+        if not state["refilled"] and model.logical_calls < 3:
             return "refill"
         return END
 
@@ -339,7 +342,10 @@ def make_graph(catalogue, model, events):
         graph.add_node(name, node)
     graph.add_edge(START, "interpret")
     graph.add_conditional_edges(
-        "interpret", lambda state: END if state.get("clarification") else "retrieve"
+        "interpret",
+        lambda state: END
+        if state.get("clarification") or state.get("moderation")
+        else "retrieve",
     )
     graph.add_conditional_edges(
         "retrieve", lambda state: END if state.get("clarification") else "rank"
@@ -359,7 +365,7 @@ def make_graph(catalogue, model, events):
 
 async def run_agent(message, catalogue, model, snapshot, timeout_s=180):
     if not message.strip() or len(message) > 2000:
-        raise ValueError("Сообщение должно содержать от 1 до 2000 символов.")
+        raise ValueError("Messages must contain between 1 and 2,000 characters.")
     started, events = time.perf_counter(), []
     current_data = snapshot.get("draft_spec") or snapshot.get("spec")
     current = PlaylistSpec.model_validate(current_data) if current_data else None
@@ -367,7 +373,7 @@ async def run_agent(message, catalogue, model, snapshot, timeout_s=180):
         "message": message,
         "current_spec": current,
         "previous_ids": snapshot.get("playlist_ids", []),
-        "messages": snapshot.get("messages", []),
+        "messages": snapshot.get("context_messages", snapshot.get("messages", [])),
         "polish_attempts": 0,
         "refilled": False,
         "clarification": None,
@@ -377,7 +383,13 @@ async def run_agent(message, catalogue, model, snapshot, timeout_s=180):
             result = await make_graph(catalogue, model, events).ainvoke(
                 state, {"recursion_limit": 20}
             )
-        if result.get("clarification"):
+        if result.get("moderation"):
+            response = {
+                "status": "rejected",
+                "moderation": result["moderation"],
+                "message": "This request is not allowed.",
+            }
+        elif result.get("clarification"):
             response = {"status": "clarification", "message": result["clarification"]}
             if result.get("spec"):
                 response["spec"] = result["spec"].model_dump(mode="json")
@@ -388,26 +400,46 @@ async def run_agent(message, catalogue, model, snapshot, timeout_s=180):
                 "spec": result["spec"].model_dump(mode="json"),
                 "playlist_ids": result["ids"],
                 "validation": result["validation"],
-                "message": "Плейлист готов."
+                "message": "Your playlist is ready."
                 if valid
-                else "Не удалось выполнить все ограничения: "
+                else "Not all constraints could be satisfied: "
                 + " ".join(result["validation"]["errors"]),
             }
             if valid and result["validation"]["warnings"]:
                 response["message"] += (
-                    " Профиль энергии местами отличается от цели — посмотри график."
+                    " Parts of the energy profile differ from the target; please check the chart."
                 )
     except TimeoutError:
         response = {
             "status": "error",
-            "message": "Время выполнения истекло. Предыдущий плейлист сохранён; автоматического повтора нет.",
+            "message": "The run timed out. Your previous playlist is preserved and this run has not used your demo allowance.",
+        }
+    except ContentRejected as exc:
+        response = {
+            "status": "rejected" if exc.decision["stage"] == "interpret" else "error",
+            "moderation": exc.decision,
+            "message": "This request is not allowed."
+            if exc.decision["stage"] == "interpret"
+            else "Gemini could not safely evaluate these candidates. Please try another request.",
+        }
+    except ModelUnavailable:
+        response = {
+            "status": "error",
+            "failure_reason": "provider_unavailable",
+            "message": "The model is currently unavailable. Please try again later. This run has not used your demo allowance.",
         }
     except (ModelError, ValueError) as exc:
         response = {"status": "error", "message": str(exc)}
+    response["counts_toward_quota"] = response["status"] in {
+        "success",
+        "clarification",
+        "failed",
+    }
     response["metrics"] = {
         "elapsed_s": round(time.perf_counter() - started, 3),
         "events": events,
         "llm_calls": len(model.calls),
+        "model_operations": model.logical_calls,
         "token_count_calls": model.token_count_calls,
         "calls": model.calls,
         "total_tokens": sum(call["total_tokens"] for call in model.calls)

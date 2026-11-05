@@ -210,6 +210,8 @@ class Catalogue:
             clauses.append(f"t.track_id NOT IN ({marks})")
             parameters.extend(spec.excluded_track_ids)
         for field, bounds in phase.hard_feature_ranges.items():
+            if field not in FEATURES:
+                raise ValueError("Unsupported audio feature.")
             clauses.append(f"t.{field} BETWEEN ? AND ?")
             parameters.extend(bounds)
         where = " AND ".join(clauses) if clauses else "1"

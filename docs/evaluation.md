@@ -95,3 +95,20 @@ candidate-order response complete successfully.
 Raw outputs stay in the ignored `reports/` directory. No MPD data was used.
 Held-out playlist continuation, Recall@K and related retrieval metrics belong to
 the separate MPD experiment and cannot validate natural-language mood matching.
+
+## Request safeguards
+
+After adding moderation, a live UI request was rejected as `privacy_abuse` after
+one generation. The audit stored the native HTTP request representation, model
+reason and connection IP. The user counter remained zero. A safe request in the
+same conversation subsequently produced three catalogue tracks in 33.02 seconds
+using two model operations; the rejected turn was absent from model context.
+The session then recorded one used run, one rejected request and three physical
+generation attempts.
+
+Private regression checks cover the asymmetric duration boundaries, two 503
+retries, the nine-attempt ceiling, user-allowance accounting, SQL injection
+payloads, missing moderation decisions, provider safety flags and credential
+redaction. Direct HTTP probes of the key, audit database, session snapshot,
+private test and Git config paths returned 403. Browser checks confirmed English
+chat controls and output. These are targeted checks, not a full penetration test.

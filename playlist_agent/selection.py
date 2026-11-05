@@ -175,9 +175,15 @@ def validate_playlist(spec, ids, catalogue):
     total = sum(track["duration_ms"] for track in tracks)
     target = spec.length.target_duration_s
     duration_error = total / 1000 - target if target is not None else None
-    if target is not None and abs(duration_error) > spec.length.tolerance_s:
+    if (
+        target is not None
+        and not -spec.length.tolerance_before_s
+        <= duration_error
+        <= spec.length.tolerance_after_s
+    ):
         errors.append(
-            f"Duration error {duration_error:+.1f}s exceeds ±{spec.length.tolerance_s}s."
+            f"Duration error {duration_error:+.1f}s is outside "
+            f"[-{spec.length.tolerance_before_s}, +{spec.length.tolerance_after_s}]s."
         )
     if (
         spec.length.target_track_count is not None
@@ -287,8 +293,13 @@ def _sequence_cost(spec, tracks):
                 phase_errors[phase.id][1] += overlap
         elapsed = end
     target = spec.length.target_duration_s
-    error = abs(total - target * 1000) if target is not None else 0
-    excess = max(0, error - spec.length.tolerance_s * 1000)
+    offset = total - target * 1000 if target is not None else 0
+    error = abs(offset)
+    excess = max(
+        0,
+        -offset - spec.length.tolerance_before_s * 1000,
+        offset - spec.length.tolerance_after_s * 1000,
+    )
     return (
         hard_violations,
         excess,
