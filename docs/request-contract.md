@@ -9,6 +9,39 @@ update produces the accepted `PlaylistSpec`. The table uses paths relative to
 
 ## Fields to interpret
 
+The complete original request is retained separately as `request_text` by the
+application and sent to relevance ranking alongside `semantic_brief`. It is not
+an executable instruction and is not an LLM-controlled configuration field.
+
+Requested genres are extracted individually. A mixture gets separate genre
+requirements and balanced candidate retrieval; a global OR genre preference
+alone does not preserve a mix. `requirements` contains a `selector` (`kind` is
+`artist`, `genre` or `title`, `values` are alternatives), `min_count`, optional
+`max_count`, optional `phase_id` and optional soft `target_share` of playback time.
+For example, including Metallica twice is an artist requirement with both counts
+set to 2. A two-style mix can target 0.5/0.5; a main genre with one addition can
+target 0.9/0.1. Inferred shares are displayed and are not hard percentage quotas.
+The minimum counts remain mandatory.
+
+`prefix` contains a selector and a count, for example the first three tracks
+must be pop. Set it to null to remove it on an edit. `excluded_works` excludes
+matching work names/catalogue numbers across recordings; Symphony 40 and K.550
+do not go through exact-track reference resolution. `phase.genres` restricts a
+musical section, such as the hip-hop middle. Genre assignment to a section uses
+the track midpoint; explicit feature ranges are checked over every overlap.
+
+Mandatory selections are placed before optional tracks. Assembly enforces count
+ceilings, and both validation and polish preserve count requirements and the
+prefix. Missing requirements prevent a successful completion status. Genre
+checks remain limited by catalogue tags; composer selection uses artist credits,
+not an independently verified composer field.
+
+Energy and tempo have no default target, ordering preference or transition penalty.
+Use them only when requested explicitly or through relevant synonyms such as
+energetic, calm or fast beats; genre, artist and gym activity alone do not assign
+numerical audio targets. The original request and musical descriptions still
+inform LLM relevance ranking.
+
 | Field | Meaning and interpretation |
 | --- | --- |
 | `action`, `edit_scope`, `replace_phases` | `create`, `edit`, `clarify` or `reject`. Scope is `all` or an existing phase ID. Phase edits merge by stable ID; set `replace_phases` to replace or remove the phase structure. |

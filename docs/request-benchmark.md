@@ -20,6 +20,8 @@ the batch. After checking the quota and waiting, `--live --retry-errors`
 explicitly retries saved errors once per case; previous attempts are archived.
 Successful and clarification responses are retained. The regular per-operation
 503 retry policy and 180-second deadline still apply.
+The batch waits six seconds between cases to reduce bursts against free-tier
+rate limits. That wait is excluded from the per-run agent latency.
 
 Open `reports/request_benchmark/comparison.html` for side-by-side playlists and
 clickable Spotify links. Markdown, JSON and individual reference records are
@@ -124,3 +126,36 @@ not evidence of an independent human evaluation.
    deployment limits.
 
 The application algorithm is deliberately unchanged in this benchmark iteration.
+
+## Comparing the constraint fixes
+
+Keep the original output directory intact and run a new iteration with:
+
+```powershell
+.venv\Scripts\python.exe benchmark.py --live --output reports/request_benchmark_v3
+```
+
+`--output` also controls offline report generation. Authentication/configuration
+errors (400/401/403/404) now stop a batch as well as provider quota errors. Server
+structured-output schemas omit numeric/length constraints to avoid Gemini grammar
+complexity limits; Pydantic still enforces the complete application contract.
+The initial schema-rejection attempts in the second iteration were retained,
+then explicitly retried after fixing the API schema.
+
+The final third iteration passed the mechanical checks for all 15 cases: 14
+playlists and the expected birthday clarification. Case 13 initially received
+429 during ranking; an explicit later retry after a pause succeeded, as did
+cases 14–15. That failed attempt remains archived. The final version also passed
+45 private regression tests and all ten offline tool scenarios. A saved
+conversation was restored through the restarted Gradio application, retaining
+clickable Spotify links.
+
+In the retained live results, case 2 has about 6% pop playback time and case 3
+about 34%, instead of the same playlist for both requests. Exact Metallica counts,
+country/classical counts, the pop prefix and Mozart credit/work filtering pass.
+These checks still do not establish musical quality: the mixed pop selection
+does not reliably capture the intended mainstream singalong style, case 14
+still lacks a convincing East/West Coast mix, and case 10's final work does not
+clearly deliver the requested tension. Case 9 also includes movements/fragments
+from the same Mozart work. Those are remaining semantic selection and work-
+identity problems, not successes implied by the mechanical score.

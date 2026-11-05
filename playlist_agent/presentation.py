@@ -10,14 +10,16 @@ def describe_spec(spec):
     length = spec.length
     lines = []
     if length.target_duration_s is not None:
-        lines.append(
-            f"{length.target_duration_s / 60:g} min (-{length.tolerance_before_s / 60:g}/+{length.tolerance_after_s / 60:g} min)"
-        )
+        minutes = f"{length.target_duration_s / 60:g}"
+        before = f"{length.tolerance_before_s / 60:g}"
+        after = f"{length.tolerance_after_s / 60:g}"
+        lines.append(f"{minutes} min (-{before}/+{after} min)")
     if length.target_track_count is not None:
         lines.append(f"{length.target_track_count} tracks")
     text = "**Interpreted request:** " + "; ".join(lines) + "."
     if spec.semantic_brief:
         text += "\n\n" + html.escape(spec.semantic_brief)
+
     limits = []
     for label, values in [
         ("Preferred genres", spec.genres.preferred),
@@ -29,6 +31,7 @@ def describe_spec(spec):
     ]:
         if values:
             limits.append(label + ": " + html.escape(", ".join(values)))
+
     if spec.diversity.max_tracks_per_artist is not None:
         limits.append(
             f"At most {spec.diversity.max_tracks_per_artist} tracks per artist"
@@ -37,8 +40,39 @@ def describe_spec(spec):
         limits.append("Exclude explicit tracks")
     if spec.locked_track_ids:
         limits.append(f"Locked: {len(spec.locked_track_ids)}")
+
+    for rule in spec.requirements:
+        if rule.max_count == rule.min_count:
+            count = f"exactly {rule.min_count}"
+        else:
+            count = f"at least {rule.min_count}"
+            if rule.max_count is not None:
+                count += f", at most {rule.max_count}"
+        description = (
+            f"{rule.selector.kind}: {' / '.join(rule.selector.values)} — {count}"
+        )
+        if rule.phase_id:
+            description += f" in {rule.phase_id}"
+        limits.append(html.escape(description))
+        if rule.target_share is not None:
+            share = f"{rule.target_share:.0%}"
+            limits.append(
+                html.escape(
+                    f"Target share for {' / '.join(rule.selector.values)}: {share}"
+                )
+            )
+
+    if spec.prefix:
+        limits.append(
+            html.escape(
+                f"First {spec.prefix.count}: {' / '.join(spec.prefix.selector.values)}"
+            )
+        )
+    if spec.excluded_works:
+        limits.append("Excluded works: " + html.escape(", ".join(spec.excluded_works)))
     if limits:
         text += "\n\n" + "; ".join(limits) + "."
+
     phases = []
     for phase, start, end in phase_schedule(spec):
         label = html.escape(phase.description or phase.id)
@@ -49,6 +83,7 @@ def describe_spec(spec):
         phases.append(label)
     if len(phases) > 1 or any(phase.energy_target is not None for phase in spec.phases):
         text += "\n\n**Profile:** " + " → ".join(phases) + "."
+
     inferred = [
         html.escape(item.field + " = " + item.value)
         for item in spec.assumptions
@@ -104,29 +139,33 @@ def profile_svg(spec, tracks):
 
 
 def table_rows(tracks, clickable_links=False):
-    return [
-        [
-            index,
-            track["title"],
-            track["artists"],
-            round(track["duration_ms"] / 60000, 2),
-            track["energy"],
-            ", ".join(track["genres"]),
-            f"[Open in Spotify](https://open.spotify.com/track/{track['track_id']})"
-            if clickable_links
-            else f"https://open.spotify.com/track/{track['track_id']}",
-        ]
-        for index, track in enumerate(tracks, 1)
-    ]
+    rows = []
+    for index, track in enumerate(tracks, 1):
+        url = f"https://open.spotify.com/track/{track['track_id']}"
+        if clickable_links:
+            link = f"[Open in Spotify]({url})"
+        else:
+            link = url
+        rows.append(
+            [
+                index,
+                track["title"],
+                track["artists"],
+                round(track["duration_ms"] / 60000, 2),
+                track["energy"],
+                ", ".join(track["genres"]),
+                link,
+            ]
+        )
+    return rows
 
 
 def export_playlist(directory, session_id, spec, tracks):
     directory = Path(directory)
     directory.mkdir(parents=True, exist_ok=True)
-    json_path, csv_path = (
-        directory / f"{session_id}.json",
-        directory / f"{session_id}.csv",
-    )
+    json_path = directory / f"{session_id}.json"
+    csv_path = directory / f"{session_id}.csv"
+
     json_path.write_text(
         json.dumps(
             {"spec": spec.model_dump(mode="json"), "tracks": tracks},
@@ -136,6 +175,7 @@ def export_playlist(directory, session_id, spec, tracks):
         ),
         encoding="utf-8",
     )
+
     with csv_path.open("w", encoding="utf-8-sig", newline="") as stream:
         writer = csv.writer(stream)
         writer.writerow(

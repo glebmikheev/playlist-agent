@@ -27,10 +27,12 @@ def prepare_catalogue(source: Path, destination: Path):
         checksum = hashlib.file_digest(stream, "sha256").hexdigest()
     if checksum != SOURCE_SHA256:
         raise ValueError("The source CSV does not match the pinned dataset revision.")
+
     destination.parent.mkdir(parents=True, exist_ok=True)
     temporary = destination.with_suffix(".building.sqlite")
     if temporary.exists():
         temporary.unlink()
+
     rows = []
     genre_rows = set()
     artist_rows = set()
@@ -39,19 +41,23 @@ def prepare_catalogue(source: Path, destination: Path):
     with source.open(encoding="utf-8", newline="") as stream:
         for row in csv.DictReader(stream):
             track_id = row["track_id"]
-            title, artists = row["track_name"].strip(), row["artists"].strip()
+            title = row["track_name"].strip()
+            artists = row["artists"].strip()
             duration = int(row["duration_ms"])
             energy = float(row["energy"])
             if not title or not artists or duration <= 0 or not 0 <= energy <= 1:
                 rejected += 1
                 continue
+
             genre_rows.add((track_id, normalize(row["track_genre"])))
             for artist in artists.split(";"):
                 if artist.strip():
                     artist_rows.add((track_id, normalize(artist)))
+
             if track_id in seen:
                 continue
             seen.add(track_id)
+
             values = []
             for feature in FEATURES:
                 value = float(row[feature])
@@ -70,6 +76,7 @@ def prepare_catalogue(source: Path, destination: Path):
                     *values,
                 )
             )
+
     with closing(sqlite3.connect(temporary)) as connection:
         connection.executescript("""
             CREATE TABLE tracks (
@@ -130,12 +137,10 @@ class Catalogue:
 
     def vocabulary(self):
         with closing(self.connect()) as connection:
-            return [
-                row[0]
-                for row in connection.execute(
-                    "SELECT DISTINCT genre FROM track_genres ORDER BY genre"
-                )
-            ]
+            rows = connection.execute(
+                "SELECT DISTINCT genre FROM track_genres ORDER BY genre"
+            )
+            return [row[0] for row in rows]
 
     def tracks(self, ids):
         if not ids:
@@ -175,7 +180,8 @@ class Catalogue:
                         .removeprefix("spotify:track:")
                     )
                     rows = connection.execute(
-                        "SELECT track_id FROM tracks WHERE track_id = ? OR lower(title) = lower(?) LIMIT 2",
+                        "SELECT track_id FROM tracks "
+                        "WHERE track_id = ? OR lower(title) = lower(?) LIMIT 2",
                         (text, text),
                     ).fetchall()
                     if len(rows) != 1:
@@ -187,47 +193,93 @@ class Catalogue:
                     resolved.append(track_id)
         return resolved
 
-    def search(self, spec, phase, limit=1000):
-        clauses, parameters = [], []
-        for table, field, values, excluded in [
+    def search(self, spec, phase, limit=1000, selector=None):
+        clauses = []
+        parameters = []
+
+        restrictions = [
             ("track_genres", "genre", spec.genres.allowed, False),
             ("track_genres", "genre", spec.genres.excluded, True),
             ("track_artists", "artist", spec.artists.only, False),
             ("track_artists", "artist", spec.artists.excluded, True),
-        ]:
-            if values is not None and (values or not excluded):
-                if not values:
-                    clauses.append("0")
-                    continue
-                marks = ",".join("?" for _ in values)
-                exists = f"EXISTS (SELECT 1 FROM {table} f WHERE f.track_id=t.track_id AND f.{field} IN ({marks}))"
-                clauses.append(("NOT " if excluded else "") + exists)
-                parameters.extend(normalize(value) for value in values)
+        ]
+        for table, field, values, excluded in restrictions:
+            if values is None or (not values and excluded):
+                continue
+            if not values:
+                clauses.append("0")
+                continue
+            marks = ",".join("?" for _ in values)
+            exists = (
+                f"EXISTS (SELECT 1 FROM {table} f "
+                f"WHERE f.track_id=t.track_id AND f.{field} IN ({marks}))"
+            )
+            clauses.append(("NOT " if excluded else "") + exists)
+            parameters.extend(normalize(value) for value in values)
+
         if spec.content.explicit == "exclude":
             clauses.append("t.explicit=0")
         if spec.excluded_track_ids:
             marks = ",".join("?" for _ in spec.excluded_track_ids)
             clauses.append(f"t.track_id NOT IN ({marks})")
             parameters.extend(spec.excluded_track_ids)
+        if phase.genres:
+            marks = ",".join("?" for _ in phase.genres)
+            clauses.append(
+                f"EXISTS (SELECT 1 FROM track_genres p "
+                f"WHERE p.track_id=t.track_id AND p.genre IN ({marks}))"
+            )
+            parameters.extend(normalize(value) for value in phase.genres)
+
+        if selector is not None:
+            if selector.kind in {"artist", "genre"}:
+                table, field = {
+                    "artist": ("track_artists", "artist"),
+                    "genre": ("track_genres", "genre"),
+                }[selector.kind]
+                marks = ",".join("?" for _ in selector.values)
+                clauses.append(
+                    f"EXISTS (SELECT 1 FROM {table} s "
+                    f"WHERE s.track_id=t.track_id AND s.{field} IN ({marks}))"
+                )
+                parameters.extend(normalize(value) for value in selector.values)
+            else:
+                title_matches = " OR ".join(
+                    "instr(lower(t.title), lower(?)) > 0" for _ in selector.values
+                )
+                clauses.append("(" + title_matches + ")")
+                parameters.extend(selector.values)
+
         for field, bounds in phase.hard_feature_ranges.items():
             if field not in FEATURES:
                 raise ValueError("Unsupported audio feature.")
             clauses.append(f"t.{field} BETWEEN ? AND ?")
             parameters.extend(bounds)
+
         where = " AND ".join(clauses) if clauses else "1"
-        target = phase.energy_target if phase.energy_target is not None else 0.5
-        score = "abs(t.energy-?)"
-        order_parameters = [target]
+        score = "0.0"
+        score_parameters = []
+        if phase.energy_target is not None:
+            score += " + coalesce(abs(t.energy-?), 1)"
+            score_parameters.append(phase.energy_target)
+        if phase.tempo_bpm_range is not None:
+            score += " + coalesce(max(?-t.tempo, t.tempo-?, 0)/100.0, 1)"
+            score_parameters.extend(phase.tempo_bpm_range)
         if spec.genres.preferred:
             marks = ",".join("?" for _ in spec.genres.preferred)
-            score += f" - 0.35 * EXISTS (SELECT 1 FROM track_genres g WHERE g.track_id=t.track_id AND g.genre IN ({marks}))"
-            order_parameters.extend(normalize(value) for value in spec.genres.preferred)
+            score += (
+                " - 0.35 * EXISTS (SELECT 1 FROM track_genres g "
+                f"WHERE g.track_id=t.track_id AND g.genre IN ({marks}))"
+            )
+            score_parameters.extend(normalize(value) for value in spec.genres.preferred)
+
         with closing(self.connect()) as connection:
             ids = [
                 row[0]
                 for row in connection.execute(
-                    f"SELECT t.track_id FROM tracks t WHERE {where} ORDER BY {score}, t.track_id LIMIT ?",
-                    [*parameters, *order_parameters, limit],
+                    f"SELECT t.track_id FROM tracks t WHERE {where} "
+                    f"ORDER BY {score}, t.track_id LIMIT ?",
+                    [*parameters, *score_parameters, limit],
                 )
             ]
         return self.tracks(ids)

@@ -264,6 +264,17 @@ review exposes missing mandatory artists, composer mistakes and weak genre/phase
 control. Address those before selecting public cloud quotas. Generated reports stay
 outside Git.
 
+The follow-up implementation extracts required artist/genre counts and prefixes,
+retrieves components separately and reserves mandatory tracks before optional
+ones. Untargeted energy/tempo have no numerical preference. Mixed-genre shares
+are visible soft goals; composer/work filtering and final validation enforce
+the supported catalogue conditions. New runs can be isolated with
+`python benchmark.py --live --output reports/request_benchmark_v3`.
+The final follow-up run passes all 15 mechanical checks (14 playlists and one
+expected clarification), compared with seven in the initial run. Musical
+relevance, regional rap identity and work-level deduplication remain separate
+limitations documented in the benchmark notes.
+
 Complete live evaluation with the selected model, then tune
 thinking, prompt/pool size and output allowance. Choose cloud quotas from those
 measurements and build the independent GCP entry point. Spotify connection and

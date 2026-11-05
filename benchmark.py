@@ -35,12 +35,12 @@ METAL_LABELS = {
 def check_requirements(case, ids, catalogue, status):
     tracks = catalogue.tracks(ids)
     failures = []
+
     if case.get("expected_action") == "clarification":
+        passed = status == "clarification"
         return {
-            "passed": status == "clarification",
-            "failures": []
-            if status == "clarification"
-            else ["Expected a length clarification"],
+            "passed": passed,
+            "failures": [] if passed else ["Expected a length clarification"],
             "duration_s": 0,
             "track_count": len(ids),
         }
@@ -51,22 +51,27 @@ def check_requirements(case, ids, catalogue, status):
             "duration_s": 0,
             "track_count": len(ids),
         }
+
     if len(set(ids)) != len(ids):
         failures.append("Duplicate track IDs")
     if len(tracks) != len(ids):
         failures.append("Unknown catalogue IDs")
     if not tracks:
         failures.append("Empty playlist")
+
     duration = sum(track["duration_ms"] for track in tracks) / 1000
     target = case.get("duration_s")
     if target and not target - 180 <= duration <= target + 300:
-        failures.append(
-            f"Duration {duration / 60:.2f} min outside {target / 60 - 3:g}–{target / 60 + 5:g}"
-        )
+        low = target / 60 - 3
+        high = target / 60 + 5
+        failures.append(f"Duration {duration / 60:.2f} min outside {low:g}–{high:g}")
+
     if "count_range" in case:
         low, high = case["count_range"]
         if not low <= len(ids) <= high:
             failures.append(f"Expected {low}–{high} tracks, got {len(ids)}")
+
+    # A track is counted once per artist even if a credit repeats the same name.
     artists = Counter(name for track in tracks for name in set(track["artist_names"]))
     labels = {
         track["track_id"]: set(track["genres"])
@@ -74,19 +79,25 @@ def check_requirements(case, ids, catalogue, status):
         for track in tracks
     }
     genres = Counter(genre for values in labels.values() for genre in values)
+
     if "metal" in case.get("required_styles", []) and not any(
         values & METAL_LABELS for values in labels.values()
     ):
         failures.append("No track with a metal-family label")
+
     for field, counts in (("artist", artists), ("genre", genres)):
         for kind in ("min", "exact"):
             for name, expected in case.get(f"{field}_{kind}", {}).items():
                 actual = counts[normalize(name)]
-                matches = actual >= expected if kind == "min" else actual == expected
+                if kind == "min":
+                    matches = actual >= expected
+                else:
+                    matches = actual == expected
                 if not matches:
                     failures.append(
                         f"{field} {name}: expected {kind} {expected}, got {actual}"
                     )
+
     composer = case.get("composer")
     if composer:
         wrong = [
@@ -96,14 +107,16 @@ def check_requirements(case, ids, catalogue, status):
         ]
         if wrong:
             failures.append(f"Non-{composer} tracks: {len(wrong)}")
+
     for pattern in case.get("exclude_title_patterns", []):
-        matches = [
+        found = [
             track["title"]
             for track in tracks
             if re.search(pattern, track["title"], re.I)
         ]
-        if matches:
-            failures.append(f"Excluded work present: {matches[0]}")
+        if found:
+            failures.append(f"Excluded work present: {found[0]}")
+
     prefix = case.get("prefix_genre")
     if prefix and (
         len(tracks) < prefix["count"]
@@ -115,18 +128,20 @@ def check_requirements(case, ids, catalogue, status):
         failures.append(
             f"First {prefix['count']} tracks must have {prefix['genre']} label"
         )
+
     if "middle_genre" in case and tracks:
         elapsed = 0
-        central = False
+        at_midpoint = False
         for track in tracks:
             if (
                 case["middle_genre"] in labels[track["track_id"]]
                 and elapsed <= duration * 500 <= elapsed + track["duration_ms"]
             ):
-                central = True
+                at_midpoint = True
             elapsed += track["duration_ms"]
-        if not central:
+        if not at_midpoint:
             failures.append(f"No {case['middle_genre']} track at playback midpoint")
+
     return {
         "passed": not failures,
         "failures": failures,
@@ -200,12 +215,13 @@ async def live(cases, catalogue, retry_errors):
             if result.get("failure_reason") == "provider_unavailable"
             else 0
         )
-        if 429 in codes or unavailable >= 2:
+        if any(code in {400, 401, 403, 404, 429} for code in codes) or unavailable >= 2:
             print(
-                "Stopped on quota or repeated unavailability. Saved results are retained.",
+                "Stopped on provider error or repeated unavailability. Saved results are retained.",
                 flush=True,
             )
             break
+        await asyncio.sleep(6)
 
 
 def report(cases, catalogue):
@@ -291,7 +307,7 @@ def report(cases, catalogue):
         "",
         review["basis"],
         "",
-        "The initial 429 is preserved in gemini/previous_attempts. Retained-attempt latency is not an availability estimate. Older reports lack a source/settings fingerprint; new runs record one. No runtime retrieval or selection changes were made during this baseline.",
+        "Previous attempts, when present, are retained in gemini/previous_attempts. Latency describes retained attempts, not long-term availability. Reports with provenance include runtime-source, case and catalogue hashes and non-secret settings. Editorial reviews apply only to matching saved results.",
         "",
         "| Case | Reference tracks / minutes | Gemini status | Checks | Failures |",
         "|---|---:|---|---|---|",
@@ -401,11 +417,18 @@ if __name__ == "__main__":
         "--live", action="store_true", help="Use Gemini for cases with no saved result"
     )
     parser.add_argument(
+        "--output",
+        type=Path,
+        default=DIRECTORY,
+        help="Separate directory for a new benchmark iteration",
+    )
+    parser.add_argument(
         "--retry-errors",
         action="store_true",
         help="Explicitly retry saved errors once, retaining their previous reports",
     )
     args = parser.parse_args()
+    DIRECTORY = args.output
     cases = json.loads(CASES.read_text(encoding="utf-8"))
     catalogue = Catalogue("data/catalogue.sqlite")
     if args.live:

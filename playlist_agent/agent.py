@@ -7,6 +7,7 @@ from langgraph.graph import END, START, StateGraph
 
 from .gemini import ContentRejected, ModelError, ModelUnavailable
 from .models import Phase, PlaylistSpec, apply_interpretation, phase_schedule
+from .retrieval import retrieve_candidates
 from .selection import (
     build_playlist,
     diverse_shortlist,
@@ -37,9 +38,19 @@ class State(TypedDict, total=False):
     moderation: dict
 
 
+def _record_event(events, stage, started_at, **details):
+    events.append(
+        {
+            "stage": stage,
+            "seconds": round(time.perf_counter() - started_at, 3),
+            **details,
+        }
+    )
+
+
 def make_graph(catalogue, model, events):
     async def interpret(state):
-        started = time.perf_counter()
+        started_at = time.perf_counter()
         parsed = await model.interpret(
             state["message"],
             state["current_spec"],
@@ -59,8 +70,22 @@ def make_graph(catalogue, model, events):
                 + "; ".join(parsed.unverifiable_requests)
                 + ". May I continue without treating these as mandatory requirements?"
             }
+
         try:
             spec = apply_interpretation(state["current_spec"], parsed)
+            if parsed.action == "create":
+                spec.request_text = state["message"]
+            else:
+                spec.request_text = (spec.request_text + "\n" + state["message"])[
+                    -4000:
+                ]
+            if not spec.semantic_brief.strip():
+                if parsed.action == "create":
+                    spec.semantic_brief = state["message"]
+                else:
+                    spec.semantic_brief = (
+                        spec.semantic_brief + "\n" + state["message"]
+                    )[-2000:]
             if (
                 spec.length.target_duration_s is None
                 and spec.length.target_track_count is None
@@ -69,6 +94,7 @@ def make_graph(catalogue, model, events):
                     "clarification": "How many minutes or tracks should the playlist contain?",
                     "spec": spec,
                 }
+
             spec.locked_track_ids = list(
                 dict.fromkeys(
                     [
@@ -115,7 +141,13 @@ def make_graph(catalogue, model, events):
         fixed = {phase.id: [] for phase in spec.phases}
         frozen, protected = [], []
         current = state["current_spec"]
-        exclude = {"phases", "semantic_brief", "assumptions", "locked_track_ids"}
+        exclude = {
+            "phases",
+            "semantic_brief",
+            "request_text",
+            "assumptions",
+            "locked_track_ids",
+        }
         if (
             current
             and parsed.action == "edit"
@@ -142,25 +174,22 @@ def make_graph(catalogue, model, events):
                     fixed[phase_id].append(track)
                     protected.append(track["track_id"])
             frozen = [phase_id for phase_id in fixed if phase_id != parsed.edit_scope]
+
         placed = {track["track_id"] for group in fixed.values() for track in group}
         for track in locked:
-            if track["track_id"] not in placed:
-                eligible = [
-                    phase for phase in spec.phases if track_allowed(track, spec, phase)
-                ]
-                if not eligible:
-                    return {
-                        "clarification": f"The locked track {track['title']} does not fit any mandatory phase."
-                    }
-                phase = min(eligible, key=lambda phase: feature_cost(track, phase))
-                fixed[phase.id].append(track)
-        events.append(
-            {
-                "stage": "interpret",
-                "seconds": round(time.perf_counter() - started, 3),
-                "scope": parsed.edit_scope,
-            }
-        )
+            if track["track_id"] in placed:
+                continue
+            eligible = [
+                phase for phase in spec.phases if track_allowed(track, spec, phase)
+            ]
+            if not eligible:
+                return {
+                    "clarification": f"The locked track {track['title']} does not fit any mandatory phase."
+                }
+            phase = min(eligible, key=lambda phase: feature_cost(track, phase))
+            fixed[phase.id].append(track)
+
+        _record_event(events, "interpret", started_at, scope=parsed.edit_scope)
         return {
             "spec": spec,
             "fixed": fixed,
@@ -169,18 +198,18 @@ def make_graph(catalogue, model, events):
         }
 
     def retrieve(state):
-        started = time.perf_counter()
+        started_at = time.perf_counter()
         spec = state["spec"]
         schedule = phase_schedule(spec)
         total = schedule[-1][2]
         expected = spec.length.target_track_count or max(1, round(total / 210000))
         pools = {}
         reserved = set()
+
         for phase, start, end in schedule:
             desired = max(1, round(expected * (end - start) / total))
             size = min(180, max(30, desired * 4 + 8))
-            candidates = catalogue.search(spec, phase, min(8000, max(2500, size * 25)))
-            candidates.sort(key=lambda track: feature_cost(track, phase))
+            candidates = retrieve_candidates(catalogue, spec, phase, size * 2)
             available = [
                 track for track in candidates if track["track_id"] not in reserved
             ]
@@ -192,17 +221,17 @@ def make_graph(catalogue, model, events):
                 return {
                     "clarification": f"No tracks match the mandatory filters for phase {phase.id}. Which constraints may be changed?"
                 }
-        events.append(
-            {
-                "stage": "retrieve",
-                "seconds": round(time.perf_counter() - started, 3),
-                "candidates": {key: len(value) for key, value in pools.items()},
-            }
+
+        _record_event(
+            events,
+            "retrieve",
+            started_at,
+            candidates={key: len(value) for key, value in pools.items()},
         )
         return {"pools": pools}
 
     async def rank(state):
-        started = time.perf_counter()
+        started_at = time.perf_counter()
         phases = [
             phase
             for phase in state["spec"].phases
@@ -218,13 +247,11 @@ def make_graph(catalogue, model, events):
             ]
             for phase_id, pool in state["pools"].items()
         }
-        events.append(
-            {"stage": "rank", "seconds": round(time.perf_counter() - started, 3)}
-        )
+        _record_event(events, "rank", started_at)
         return {"scores": scores, "pools": pools}
 
     def assemble(state):
-        started = time.perf_counter()
+        started_at = time.perf_counter()
         ids = build_playlist(
             state["spec"],
             state["pools"],
@@ -232,29 +259,17 @@ def make_graph(catalogue, model, events):
             state["fixed"],
             state["frozen_phases"],
         )
-        events.append(
-            {
-                "stage": "assemble",
-                "seconds": round(time.perf_counter() - started, 3),
-                "tracks": len(ids),
-            }
-        )
+        _record_event(events, "assemble", started_at, tracks=len(ids))
         return {"ids": ids}
 
     def validate(state):
-        started = time.perf_counter()
+        started_at = time.perf_counter()
         report = validate_playlist(state["spec"], state["ids"], catalogue)
-        events.append(
-            {
-                "stage": "validate",
-                "seconds": round(time.perf_counter() - started, 3),
-                "passed": report["passed"],
-            }
-        )
+        _record_event(events, "validate", started_at, passed=report["passed"])
         return {"validation": report}
 
     def polish(state):
-        started = time.perf_counter()
+        started_at = time.perf_counter()
         ids = polish_playlist(
             state["spec"],
             state["ids"],
@@ -263,13 +278,11 @@ def make_graph(catalogue, model, events):
             state["protected_ids"],
             state["frozen_phases"],
         )
-        events.append(
-            {"stage": "polish", "seconds": round(time.perf_counter() - started, 3)}
-        )
+        _record_event(events, "polish", started_at)
         return {"ids": ids, "polish_attempts": state["polish_attempts"] + 1}
 
     def refill(state):
-        started = time.perf_counter()
+        started_at = time.perf_counter()
         phases = [
             phase
             for phase in state["spec"].phases
@@ -281,14 +294,16 @@ def make_graph(catalogue, model, events):
         total = sum(sizes.values())
         if total > 400:
             sizes = {key: int(size * 400 / total) for key, size in sizes.items()}
+
         pools = dict(state["pools"])
         changed = False
         for phase in phases:
             old = pools[phase.id]
             if sizes[phase.id] <= len(old):
                 continue
-            candidates = catalogue.search(state["spec"], phase, 8000)
-            candidates.sort(key=lambda track: feature_cost(track, phase))
+            candidates = retrieve_candidates(
+                catalogue, state["spec"], phase, sizes[phase.id] * 2
+            )
             reserved = {
                 track["track_id"]
                 for key, pool in pools.items()
@@ -304,13 +319,8 @@ def make_graph(catalogue, model, events):
             if len(expanded) > len(old):
                 pools[phase.id] = expanded
                 changed = True
-        events.append(
-            {
-                "stage": "refill",
-                "seconds": round(time.perf_counter() - started, 3),
-                "expanded": changed,
-            }
-        )
+
+        _record_event(events, "refill", started_at, expanded=changed)
         return {
             "pools": pools,
             "refilled": True,
@@ -352,10 +362,7 @@ def make_graph(catalogue, model, events):
     )
     graph.add_edge("rank", "assemble")
     graph.add_edge("assemble", "validate")
-    graph.add_conditional_edges(
-        "validate",
-        after_validation,
-    )
+    graph.add_conditional_edges("validate", after_validation)
     graph.add_edge("polish", "validate")
     graph.add_conditional_edges(
         "refill", lambda state: "rank" if state["refill_available"] else END
@@ -366,7 +373,9 @@ def make_graph(catalogue, model, events):
 async def run_agent(message, catalogue, model, snapshot, timeout_s=180):
     if not message.strip() or len(message) > 2000:
         raise ValueError("Messages must contain between 1 and 2,000 characters.")
-    started, events = time.perf_counter(), []
+
+    started_at = time.perf_counter()
+    events = []
     current_data = snapshot.get("draft_spec") or snapshot.get("spec")
     current = PlaylistSpec.model_validate(current_data) if current_data else None
     state = {
@@ -378,6 +387,7 @@ async def run_agent(message, catalogue, model, snapshot, timeout_s=180):
         "refilled": False,
         "clarification": None,
     }
+
     try:
         async with asyncio.timeout(timeout_s):
             result = await make_graph(catalogue, model, events).ainvoke(
@@ -395,15 +405,18 @@ async def run_agent(message, catalogue, model, snapshot, timeout_s=180):
                 response["spec"] = result["spec"].model_dump(mode="json")
         else:
             valid = result["validation"]["passed"]
+            if valid:
+                message_out = "Your playlist is ready."
+            else:
+                message_out = "Not all constraints could be satisfied: " + " ".join(
+                    result["validation"]["errors"]
+                )
             response = {
                 "status": "success" if valid else "failed",
                 "spec": result["spec"].model_dump(mode="json"),
                 "playlist_ids": result["ids"],
                 "validation": result["validation"],
-                "message": "Your playlist is ready."
-                if valid
-                else "Not all constraints could be satisfied: "
-                + " ".join(result["validation"]["errors"]),
+                "message": message_out,
             }
             if valid and result["validation"]["warnings"]:
                 response["message"] += (
@@ -415,11 +428,12 @@ async def run_agent(message, catalogue, model, snapshot, timeout_s=180):
             "message": "The run timed out. Your previous playlist is preserved and this run has not used your demo allowance.",
         }
     except ContentRejected as exc:
+        rejected = exc.decision["stage"] == "interpret"
         response = {
-            "status": "rejected" if exc.decision["stage"] == "interpret" else "error",
+            "status": "rejected" if rejected else "error",
             "moderation": exc.decision,
             "message": "This request is not allowed."
-            if exc.decision["stage"] == "interpret"
+            if rejected
             else "Gemini could not safely evaluate these candidates. Please try another request.",
         }
     except ModelUnavailable:
@@ -430,13 +444,14 @@ async def run_agent(message, catalogue, model, snapshot, timeout_s=180):
         }
     except (ModelError, ValueError) as exc:
         response = {"status": "error", "message": str(exc)}
+
     response["counts_toward_quota"] = response["status"] in {
         "success",
         "clarification",
         "failed",
     }
     response["metrics"] = {
-        "elapsed_s": round(time.perf_counter() - started, 3),
+        "elapsed_s": round(time.perf_counter() - started_at, 3),
         "events": events,
         "llm_calls": len(model.calls),
         "model_operations": model.logical_calls,
