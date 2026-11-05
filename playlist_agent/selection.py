@@ -3,6 +3,8 @@ from collections import Counter, defaultdict
 from .catalogue import normalize
 from .models import phase_schedule
 
+ENERGY_DEVIATION_WARNING = 0.15
+
 
 def feature_cost(track, phase):
     cost = 0.0
@@ -162,6 +164,8 @@ def validate_playlist(spec, ids, catalogue):
     tracks = catalogue.tracks(ids)
     found = {track["track_id"] for track in tracks}
     errors = []
+    if not ids:
+        errors.append("Playlist is empty.")
     unknown = set(ids) - found
     if unknown:
         errors.append(f"Unknown track IDs: {', '.join(sorted(unknown))}")
@@ -238,9 +242,17 @@ def validate_playlist(spec, ids, catalogue):
                 else None,
             }
         )
+    warnings = [
+        f"Energy profile differs from target in phase {phase['id']}: "
+        f"mean {phase['mean_energy']:.2f}, target {phase['target_energy']:.2f}."
+        for phase in phases
+        if phase["energy_deviation"] is not None
+        and phase["energy_deviation"] > ENERGY_DEVIATION_WARNING
+    ]
     return {
         "passed": not errors,
         "errors": list(dict.fromkeys(errors)),
+        "warnings": warnings,
         "track_count": len(ids),
         "duration_s": total / 1000,
         "duration_error_s": duration_error,
@@ -252,20 +264,57 @@ def validate_playlist(spec, ids, catalogue):
     }
 
 
+def _sequence_cost(spec, tracks):
+    total = sum(track["duration_ms"] for track in tracks)
+    schedule = phase_schedule(spec, total_ms=max(total, 1))
+    energy_error, known_duration, hard_violations = 0, 0, 0
+    phase_errors = {phase.id: [0, 0] for phase, _, _ in schedule}
+    elapsed = 0
+    for track in tracks:
+        end = elapsed + track["duration_ms"]
+        for phase, start, phase_end in schedule:
+            overlap = max(0, min(end, phase_end) - max(elapsed, start))
+            if not overlap:
+                continue
+            if phase.hard_feature_ranges and not track_allowed(track, spec, phase):
+                hard_violations += 1
+            if phase.energy_target is not None and track["energy"] is not None:
+                energy_error += overlap * abs(track["energy"] - phase.energy_target)
+                known_duration += overlap
+                phase_errors[phase.id][0] += overlap * abs(
+                    track["energy"] - phase.energy_target
+                )
+                phase_errors[phase.id][1] += overlap
+        elapsed = end
+    target = spec.length.target_duration_s
+    error = abs(total - target * 1000) if target is not None else 0
+    excess = max(0, error - spec.length.tolerance_s * 1000)
+    return (
+        hard_violations,
+        excess,
+        max(
+            (error / duration for error, duration in phase_errors.values() if duration),
+            default=0,
+        ),
+        energy_error / known_duration if known_duration else 0,
+        error,
+    )
+
+
 def polish_playlist(spec, ids, pools, catalogue, protected_ids=(), frozen_phases=()):
     tracks = catalogue.tracks(ids)
     target = spec.length.target_duration_s
-    if target is None:
+    if target is None and not any(
+        phase.energy_target is not None for phase in spec.phases
+    ):
         return ids
-    target_ms = target * 1000
     protected = set(spec.locked_track_ids) | set(protected_ids)
     phase_by_id = {phase.id: phase for phase, _, _ in phase_schedule(spec)}
     for _ in range(8):
         duration = sum(track["duration_ms"] for track in tracks)
-        error = abs(duration - target_ms)
-        if error <= spec.length.tolerance_s * 1000:
+        best, best_cost = None, _sequence_cost(spec, tracks)
+        if best_cost[:2] == (0, 0) and best_cost[2] <= ENERGY_DEVIATION_WARNING:
             break
-        best, best_error = None, error
         used = {track["track_id"] for track in tracks}
         counts = _count_artists(tracks)
         schedule = phase_schedule(spec, total_ms=max(duration, 1))
@@ -275,12 +324,10 @@ def polish_playlist(spec, ids, pools, catalogue, protected_ids=(), frozen_phases
             elapsed += old["duration_ms"]
             if old["track_id"] in protected:
                 continue
-            if (
-                spec.length.target_track_count is None
-                and abs(duration - old["duration_ms"] - target_ms) < best_error
-            ):
-                best = ("remove", index, None)
-                best_error = abs(duration - old["duration_ms"] - target_ms)
+            if spec.length.target_track_count is None and len(tracks) > 1:
+                cost = _sequence_cost(spec, tracks[:index] + tracks[index + 1 :])
+                if cost < best_cost:
+                    best, best_cost = ("remove", index, None), cost
             phase_id = next(
                 (phase.id for phase, start, end in schedule if start <= midpoint < end),
                 schedule[-1][0].id,
@@ -293,13 +340,12 @@ def polish_playlist(spec, ids, pools, catalogue, protected_ids=(), frozen_phases
                     new, remaining, spec.diversity.max_tracks_per_artist
                 ):
                     continue
-                distance = abs(
-                    duration - old["duration_ms"] + new["duration_ms"] - target_ms
-                )
-                if distance < best_error and track_allowed(
-                    new, spec, phase_by_id[phase_id]
-                ):
-                    best, best_error = ("swap", index, new), distance
+                if track_allowed(new, spec, phase_by_id[phase_id]):
+                    cost = _sequence_cost(
+                        spec, [*tracks[:index], new, *tracks[index + 1 :]]
+                    )
+                    if cost < best_cost:
+                        best, best_cost = ("swap", index, new), cost
         if spec.length.target_track_count is None:
             for phase_id, pool in pools.items():
                 if phase_id in frozen_phases:
@@ -314,16 +360,18 @@ def polish_playlist(spec, ids, pools, catalogue, protected_ids=(), frozen_phases
                     elapsed += track["duration_ms"]
                     position += 1
                 for new in pool:
-                    distance = abs(duration + new["duration_ms"] - target_ms)
                     if (
                         new["track_id"] not in used
-                        and distance < best_error
                         and _fits_artist_cap(
                             new, counts, spec.diversity.max_tracks_per_artist
                         )
                         and track_allowed(new, spec, phase_by_id[phase_id])
                     ):
-                        best, best_error = ("add", position, new), distance
+                        cost = _sequence_cost(
+                            spec, [*tracks[:position], new, *tracks[position:]]
+                        )
+                        if cost < best_cost:
+                            best, best_cost = ("add", position, new), cost
         if best is None:
             break
         action, index, new = best

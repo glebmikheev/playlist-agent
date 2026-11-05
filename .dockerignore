@@ -1,0 +1,11 @@
+**
+!Dockerfile
+!.dockerignore
+!requirements.lock
+!app.py
+!playlist_agent/
+playlist_agent/**
+!playlist_agent/*.py
+!data/
+data/**
+!data/catalogue.sqlite

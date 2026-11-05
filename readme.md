@@ -49,6 +49,18 @@ The prepared database contains 89,740 tracks and occupies about 44.5 MiB.
 `prepare_data.py` checks the pinned CSV checksum before importing. Downloading
 and preparing data are separate from application startup.
 
+For a local container, prepare the database first, then build and run:
+
+```powershell
+docker build -t playlist-agent:local .
+docker run --rm -p 127.0.0.1:7860:8080 --env-file .env -v playlist-agent-sessions:/app/data/sessions playlist-agent:local
+```
+
+The image includes the read-only SQLite catalogue. The build context excludes
+secrets, raw data, notebooks, reports and private checks. Pass the key at runtime.
+The named volume retains local conversations. Public GCP hosting still requires
+the separate application with durable quota admission.
+
 Create a playlist, inspect its interpretation and energy profile, then describe
 an edit. Use the track selector to retain particular tracks. Completed turns
 are saved under `data/sessions/`; choose a saved dialogue to reopen it after
@@ -106,10 +118,12 @@ are application settings rather than parameters extracted from musical requests.
 
 The normal path calls an LLM for interpretation and bounded relevance ranking.
 Python assembles the playlist and checks duration, exclusions, artist caps and
-locks. Polish makes bounded local duration adjustments and returns to validation,
+locks. Polish makes bounded local duration/profile adjustments and returns to validation,
 with at most two attempts per candidate pool. If validation still fails, the
 graph may expand the pool once and rank again. It uses at most three generations
-per run, with no SDK retries. The third response still goes through assembly,
+per run, with no SDK retries. A failed generation may receive one explicit 503
+retry after a 2–4 second pause; it counts toward those same three attempts.
+Quota errors and invalid requests are not retried. The third response still goes through assembly,
 polish and validation; the limit prevents further model calls, not completion
 of local work. A failing candidate does not replace the accepted
 playlist. A phase edit retains the other phases' tracks when global constraints
@@ -124,6 +138,12 @@ agent deadline. Numeric `GEMINI_THINKING_BUDGET` applies to Gemini 2.5;
 These are measurement settings, not the final public-demo budget. API failures
 return a message and preserve the last accepted playlist. Missing provider usage
 is recorded as unknown rather than zero.
+See [provider errors](docs/provider-errors.md) for the retry policy and diagnostic evidence.
+
+Polish evaluates the actual time occupied by each track in every phase. It can
+improve energy fit even when total duration already passes, while retaining hard
+constraints, locks and frozen phases. A phase energy deviation over 0.15 produces
+a visible warning, not a new hard user constraint.
 
 Candidate retrieval balances artists before ranking. Ordinary requests use a
 soft repeat penalty; explicit caps remain hard. Refill the candidate pool before
@@ -210,8 +230,11 @@ Gemini 3.5 Flash-Lite produced a six-track playlist in 28.6 seconds using two
 generations and 3,249 reported tokens. After relaxing an overly strict complete-
 permutation check, a 50-minute request produced 14 tracks in 44.4 seconds using
 7,601 tokens. It passed hard constraints, but the ending's energy profile was
-too energetic. A later regression-checked change separates similar phases'
-candidate shortlists; its musical effect still needs a live measurement. The
+too energetic. After separating similar phases' shortlists and updating polish,
+a further run produced 13 tracks lasting 50:26, with final-phase mean energy
+0.300 against a target of 0.3. It recovered from an initial 503 within three
+generation attempts and finished in 71.4 seconds. This is one successful check,
+not an availability or musical-quality benchmark. The
 80-track run received another provider 503. Musical quality and thinking-setting
 comparisons still need review. A fixed-specification
 probe measured about 18,833 input tokens for the 348-candidate, 80-track ranking

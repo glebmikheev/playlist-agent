@@ -32,24 +32,21 @@ requires first-generation execution, request-based billing and concurrency 1;
 deployment decision.
 
 Build the catalogue once. Its current SQLite file occupies 46,624,768 bytes
-(about 44.5 MiB). The proposed cloud arrangement is a private, versioned Cloud
-Storage object, downloaded to a local temporary path once per instance before
-the app becomes ready. Pin the object generation and checksum, replace the local
-file atomically, and open it read-only. Keep the database out of the image.
-Measure the download's cold-start cost against the packaged-file alternative.
-
-The durable copy remains in Cloud Storage when an instance stops. The local
-download is disposable and uses Cloud Run instance memory. Do not run SQLite
-writes directly on a Cloud Storage FUSE mount: its file-locking semantics do not
-provide the database coordination needed for writable shared state. Quotas and
-conversations still use separate durable storage.
+(about 44.5 MiB). The agreed arrangement is to include this read-only file in
+the Docker image. `Dockerfile` copies only the prepared database and application
+runtime. There is no catalogue download at container startup. Publish a new image
+to update the catalogue; measure total image size and cold-start behavior.
 
 Cloud Storage Always Free includes 5 GB-months of Standard storage, 5,000 Class A
-and 50,000 Class B operations, in us-west1, us-central1 and us-east1. Paris is not
-an eligible storage region. Compare a same-region Cloud Run/bucket deployment
-in an eligible US region; retain Paris time for opening hours regardless of
-hosting region. Account for object versions, starts, reads and transfers in the
-budget rather than treating a small file as automatically free.
+and 50,000 Class B operations, in us-west1, us-central1 and us-east1. European
+regions are outside this allowance. The image approach removes the need for a
+catalogue bucket and lets us evaluate a European Cloud Run region separately.
+Container registry storage/build usage remains part of the cloud budget.
+
+The local container is a development artifact, not the public GCP application.
+The latter still needs its independent entry point and durable quota admission.
+Quotas and conversations must use external durable storage; embedding the
+read-only catalogue does not make writable container files persistent.
 
 Exclude source CSVs, notebooks, reports and development/test dependencies from
 the runtime image.

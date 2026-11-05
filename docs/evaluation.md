@@ -73,9 +73,15 @@ candidate-order response complete successfully.
   2,902.85 seconds in 44.359 seconds, using 7,601 tokens and two generations.
   Hard constraints passed, but final-phase mean energy was 0.575 against a target
   of 0.3. Hard-constraint success alone does not establish a good energy profile.
-- A subsequent change separates similar phases' shortlists when enough candidates
-  exist, preventing the opening from consuming the ending's ranked choices. This
-  behavior has a regression check; the musical effect has not been measured live.
+- Subsequent changes separate similar phases' shortlists and optimize the actual
+  energy profile during polish even after duration passes. A further run produced
+  13 tracks lasting 3,026.472 seconds, with mean phase energies 0.310, 0.793 and
+  0.300 against targets 0.3, 0.8 and 0.3. Hard constraints passed with no profile
+  warnings. The first interpretation request returned 503; one retry succeeded.
+  There were three generation attempts in 71.394 seconds. Successful responses
+  reported 7,279 tokens; total consumption remains unknown because the failed
+  attempt supplied no usage. This is a single live check after several changes,
+  not a controlled comparison attributing the improvement to one change.
 - The updated 80-track run received provider 503 during ranking after 19.734
   seconds. Its usage is incomplete and it is not a successful 80-track benchmark.
   Thinking comparisons and broader semantic quality remain unmeasured.
@@ -83,6 +89,8 @@ candidate-order response complete successfully.
   50-minute case and 18,833 for the 80-track case. These measurements use fixed
   specifications, not successful model interpretations. Model interpretations
   can change the prompt size, so each actual call retains its own preflight.
+- The Dockerfile includes the prepared catalogue. Image build/run verification
+  remains pending because the local Docker Engine was not running.
 
 Raw outputs stay in the ignored `reports/` directory. No MPD data was used.
 Held-out playlist continuation, Recall@K and related retrieval metrics belong to

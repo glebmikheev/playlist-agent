@@ -316,10 +316,12 @@ def make_graph(catalogue, model, events):
         }
 
     def after_validation(state):
-        if state["validation"]["passed"]:
+        if state["validation"]["passed"] and not state["validation"]["warnings"]:
             return END
         if state["polish_attempts"] < 2:
             return "polish"
+        if state["validation"]["passed"]:
+            return END
         if not state["refilled"] and len(model.calls) < 3:
             return "refill"
         return END
@@ -391,6 +393,10 @@ async def run_agent(message, catalogue, model, snapshot, timeout_s=180):
                 else "Не удалось выполнить все ограничения: "
                 + " ".join(result["validation"]["errors"]),
             }
+            if valid and result["validation"]["warnings"]:
+                response["message"] += (
+                    " Профиль энергии местами отличается от цели — посмотри график."
+                )
     except TimeoutError:
         response = {
             "status": "error",

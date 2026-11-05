@@ -118,8 +118,11 @@ Polish first reuses scored candidates. Pool expansion may require one further
 bounded ranking call within the overall attempt budget. Pool expansion occurs
 at most once and is capped at 400 candidates across mutable phases. If its input
 exceeds the configured token limit, generation is declined. There are no hidden
-SDK retries or model fallbacks. Polish uses no LLM calls and makes local
-duration adjustments; it cannot guarantee a solution to incompatible conditions.
+SDK retries or model fallbacks. One explicit retry of a 503 generation is allowed
+after a short pause, within the same three-attempt budget. Polish uses no LLM
+calls and makes local duration/profile adjustments; it cannot guarantee a
+solution to incompatible conditions. Energy deviation over 0.15 is a disclosed
+application warning threshold, not a hard requirement inferred from the request.
 
 ## Conversation persistence
 

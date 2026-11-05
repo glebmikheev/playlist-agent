@@ -1,4 +1,6 @@
+import asyncio
 import json
+import random
 import time
 
 import httpx
@@ -101,6 +103,25 @@ class GeminiClient:
         self.client.close()
 
     async def generate(self, instruction, payload, schema):
+        for attempt in range(2):
+            calls_before = len(self.calls)
+            try:
+                return await self._generate_once(instruction, payload, schema)
+            except ModelError as exc:
+                if (
+                    attempt == 0
+                    and isinstance(exc.__cause__, errors.APIError)
+                    and exc.__cause__.code == 503
+                    and len(self.calls) > calls_before
+                    and len(self.calls) < 3
+                ):
+                    delay = random.uniform(2, 4)
+                    self.calls[-1]["retry_delay_s"] = round(delay, 3)
+                    await asyncio.sleep(delay)
+                    continue
+                raise
+
+    async def _generate_once(self, instruction, payload, schema):
         if len(self.calls) >= 3:
             raise ModelError("Достигнут предел: три вызова модели на запуск.")
         prompt = (
@@ -169,7 +190,7 @@ class GeminiClient:
                 ) from exc
             if exc.code in {500, 502, 503, 504}:
                 raise ModelError(
-                    f"Gemini временно недоступна ({exc.code}). Автоматические повторы отключены; попробуй позже."
+                    f"Gemini временно недоступна ({exc.code}). Доступные попытки этого запуска закончились; попробуй позже."
                 ) from exc
             raise ModelError(
                 f"Ошибка Gemini API ({exc.code}). Проверь доступ к модели и настройку ключа."
