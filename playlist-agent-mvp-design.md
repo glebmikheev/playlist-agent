@@ -4,8 +4,9 @@ Date: 4 November 2026. Initial target: a three-hour local MVP using Gemini,
 including data preparation, a small EDA notebook, implementation and verification.
 Measure the local application before building the separate GCP deployment.
 Status: local workflow and UI implemented; catalogue EDA and offline checks run.
-Live Gemini evaluation remains pending after provider 503/504 errors. The current
-run instructions and request contract are maintained in the README and docs.
+Live evaluation began after switching from an unavailable Gemini 3.1 Flash-Lite
+to Gemini 3.5 Flash-Lite. The current run instructions, results and request
+contract are maintained in the README and docs.
 
 Development order: local Gemini MVP -> local performance/quality evaluation ->
 cloud budget selection -> independent GCP application. Reuse a shared playlist

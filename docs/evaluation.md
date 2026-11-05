@@ -28,7 +28,7 @@ multi-phase playlist:
 | Energy deviation by phase | Duration-weighted deviation from the inferred/requested profile; a feature proxy. |
 | Stage timings | Interpretation, retrieval, ranking, assembly and polish cost. |
 | Input/output/thinking tokens | Provider-reported consumption for setting later budgets. Failed calls may have unknown usage. |
-| Complete alias permutations | Ranking output is usable without fabricated or omitted candidates. |
+| Ranking coverage | Known unique aliases ranked per phase; unknown aliases and duplicates are recorded and discarded. Unranked candidates do not enter assembly. |
 
 The CLI checks explicit length slots automatically. Inspect genre mapping,
 phase interpretation and exclusions as well; a correct length alone does not
@@ -61,9 +61,24 @@ candidate-order response complete successfully.
   failure, cancellation and a depleted pool requiring a third ranking call.
 - The running Gradio app restored a clearly labeled offline fixture, rendered
   six catalogue tracks and the energy chart, and exposed both exports.
-- Gemini model metadata and token counting worked. Generation returned 503/504;
-  a minimal JSON probe also received a provider high-demand response. Successful
-  live latency, thinking comparisons and semantic quality are still unmeasured.
+- Gemini 3.1 Flash-Lite generation returned 503/504; a minimal JSON probe also
+  received a provider high-demand response. An explicit switch to the available
+  Free-tier model Gemini 3.5 Flash-Lite produced six tracks in 28.552 seconds,
+  with two generations and 3,249 reported tokens. Metadata review found tracks
+  by Aphex Twin, Mount Kimbie, Bonobo and other electronic artists; this is not
+  listening-based semantic evaluation.
+- Larger runs initially failed an unnecessary complete-permutation requirement.
+  The ranker now accepts a relevant subset and records coverage. Assembly
+  excludes unranked candidates. A 50-minute run then produced 14 tracks totaling
+  2,902.85 seconds in 44.359 seconds, using 7,601 tokens and two generations.
+  Hard constraints passed, but final-phase mean energy was 0.575 against a target
+  of 0.3. Hard-constraint success alone does not establish a good energy profile.
+- A subsequent change separates similar phases' shortlists when enough candidates
+  exist, preventing the opening from consuming the ending's ranked choices. This
+  behavior has a regression check; the musical effect has not been measured live.
+- The updated 80-track run received provider 503 during ranking after 19.734
+  seconds. Its usage is incomplete and it is not a successful 80-track benchmark.
+  Thinking comparisons and broader semantic quality remain unmeasured.
 - Ranking preflights measured 1,859 tokens for the six-track case, 5,519 for the
   50-minute case and 18,833 for the 80-track case. These measurements use fixed
   specifications, not successful model interpretations. Model interpretations

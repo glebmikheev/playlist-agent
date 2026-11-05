@@ -98,9 +98,11 @@ Retrieve broadly under hard constraints, then produce a feature-ranked,
 artist-balanced shortlist sized for the requested playlist, initially 30–180
 candidates per phase. An LLM `rank` node judges semantic fit to the brief, phase descriptions and
 reference artists from the supplied track/artist/genre metadata and audio-feature
-values. It returns a complete order of short integer aliases per phase. Code
-rejects omitted, duplicate or invented aliases, resolves real IDs and converts
-the order to relative scores. Those scores are not calibrated probabilities. Unknown musical or lyrical properties
+values. It returns an ordered relevant subset of short integer aliases per
+phase. Code discards unknown aliases, removes duplicates, resolves real IDs and
+converts the order to relative scores. Empty rankings or missing/duplicate phases
+remain errors. Coverage is recorded in metrics. Only ranked candidates, locked
+tracks and frozen phases enter assembly. Those scores are not calibrated probabilities. Unknown musical or lyrical properties
 must not become factual explanations.
 
 Python assembles the playlist using this relevance signal alongside duration,

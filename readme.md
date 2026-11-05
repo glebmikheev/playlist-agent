@@ -39,7 +39,7 @@ file, then start the app:
 .venv\Scripts\python.exe app.py
 ```
 
-Open http://127.0.0.1:7860. The default model is `gemini-3.1-flash-lite`; the
+Open http://127.0.0.1:7860. The default model is `gemini-3.5-flash-lite`; the
 configured model is used without automatic fallback. The local app listens only
 on loopback. The key stays on the server and is excluded from saved sessions,
 exports and version control. Use a Gemini project on Free tier for free API use;
@@ -109,7 +109,9 @@ Python assembles the playlist and checks duration, exclusions, artist caps and
 locks. Polish makes bounded local duration adjustments and returns to validation,
 with at most two attempts per candidate pool. If validation still fails, the
 graph may expand the pool once and rank again. It uses at most three generations
-per run, with no SDK retries. A failing candidate does not replace the accepted
+per run, with no SDK retries. The third response still goes through assembly,
+polish and validation; the limit prevents further model calls, not completion
+of local work. A failing candidate does not replace the accepted
 playlist. A phase edit retains the other phases' tracks when global constraints
 are unchanged. Locks preserve presence; they do not fix a track's position.
 Viewing a saved playlist, rendering its graph and exporting it reuse the result
@@ -126,6 +128,12 @@ is recorded as unknown rather than zero.
 Candidate retrieval balances artists before ranking. Ordinary requests use a
 soft repeat penalty; explicit caps remain hard. Refill the candidate pool before
 reporting a shortage, without silently changing user restrictions.
+Similar phases receive different shortlists when the catalogue is broad enough,
+so the opening does not consume all the ending's candidates.
+The model may rank a relevant subset instead of every retrieved candidate.
+Unknown aliases are discarded, duplicate aliases are deduplicated, and coverage
+is reported in metrics. Assembly uses only ranked candidates, retained tracks
+and frozen phases; omitted candidates are not silently treated as LLM-approved.
 
 For the local MVP, save a JSON snapshot per conversation after each completed
 turn. Include a schema version, current specification, accepted playlist IDs,
@@ -196,16 +204,22 @@ usage. Compare `--thinking-level minimal` with `--thinking-level low` on the sam
 cases; use `--output` to retain separate reports. Review musical relevance by
 hand as described in [evaluation notes](docs/evaluation.md).
 
-Current verification: the ten offline scenarios pass. Real generation attempts
-on 4 November 2026 returned provider 503/504 errors, including a minimal JSON
-probe. Model metadata and token counting succeeded. Full live generation,
-semantic quality and successful-run latency remain unverified. A token-count
+Current verification: the ten offline scenarios pass. Gemini 3.1 Flash-Lite
+generation attempts returned provider 503/504 errors. An explicit switch to
+Gemini 3.5 Flash-Lite produced a six-track playlist in 28.6 seconds using two
+generations and 3,249 reported tokens. After relaxing an overly strict complete-
+permutation check, a 50-minute request produced 14 tracks in 44.4 seconds using
+7,601 tokens. It passed hard constraints, but the ending's energy profile was
+too energetic. A later regression-checked change separates similar phases'
+candidate shortlists; its musical effect still needs a live measurement. The
+80-track run received another provider 503. Musical quality and thinking-setting
+comparisons still need review. A fixed-specification
 probe measured about 18,833 input tokens for the 348-candidate, 80-track ranking
-prompt; it was not a successful recommendation run.
+prompt; this preflight is separate from successful recommendation measurements.
 
 ## Next milestones
 
-Complete live evaluation when the configured model is available, then tune
+Complete live evaluation with the selected model, then tune
 thinking, prompt/pool size and output allowance. Choose cloud quotas from those
 measurements and build the independent GCP entry point. Spotify connection and
 playlist saving follow the core demo. The [design](playlist-agent-mvp-design.md)

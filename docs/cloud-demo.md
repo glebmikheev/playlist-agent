@@ -31,12 +31,28 @@ requires first-generation execution, request-based billing and concurrency 1;
 0.5 vCPU supports at most 1 GiB. It is an option to benchmark, not the default
 deployment decision.
 
-Build the catalogue once. Measure SQLite size, total image size and cold-start
-behavior before choosing catalogue placement. A packaged read-only catalogue,
-a file in external cloud storage, or a separate database remain deployment
-options; storing SQLite in the image is not a fixed requirement. Catalogue size
-must not be assumed small before measurement. Exclude source CSVs, notebooks,
-reports and development/test dependencies from the runtime image.
+Build the catalogue once. Its current SQLite file occupies 46,624,768 bytes
+(about 44.5 MiB). The proposed cloud arrangement is a private, versioned Cloud
+Storage object, downloaded to a local temporary path once per instance before
+the app becomes ready. Pin the object generation and checksum, replace the local
+file atomically, and open it read-only. Keep the database out of the image.
+Measure the download's cold-start cost against the packaged-file alternative.
+
+The durable copy remains in Cloud Storage when an instance stops. The local
+download is disposable and uses Cloud Run instance memory. Do not run SQLite
+writes directly on a Cloud Storage FUSE mount: its file-locking semantics do not
+provide the database coordination needed for writable shared state. Quotas and
+conversations still use separate durable storage.
+
+Cloud Storage Always Free includes 5 GB-months of Standard storage, 5,000 Class A
+and 50,000 Class B operations, in us-west1, us-central1 and us-east1. Paris is not
+an eligible storage region. Compare a same-region Cloud Run/bucket deployment
+in an eligible US region; retain Paris time for opening hours regardless of
+hosting region. Account for object versions, starts, reads and transfers in the
+budget rather than treating a small file as automatically free.
+
+Exclude source CSVs, notebooks, reports and development/test dependencies from
+the runtime image.
 Viewing, plotting and exporting an existing result must not call the LLM again.
 
 Do not add periodic warm-up requests. Defer transport choices to the cloud stage
@@ -120,6 +136,8 @@ are an additional safeguard, with enforcement delay and billable overages.
 - [Fractional CPU requirements](https://docs.cloud.google.com/run/docs/configuring/services/cpu)
 - [Cloud Run request timeout](https://docs.cloud.google.com/run/docs/configuring/request-timeout)
 - [Ephemeral filesystem](https://docs.cloud.google.com/run/docs/container-contract#filesystem)
+- [Cloud Storage volume mount limitations](https://docs.cloud.google.com/run/docs/configuring/services/cloud-storage-volume-mounts#limitations)
+- [Cloud Storage Always Free](https://cloud.google.com/storage/pricing#cloud-storage-always-free)
 - [Gemini thinking and output limits](https://aistudio.google.com/docs/thinking)
 - [Gemini rate limits](https://aistudio.google.com/docs/rate-limits)
 - [Cloud spend caps](https://docs.cloud.google.com/billing/docs/how-to/budgets-spend-caps)

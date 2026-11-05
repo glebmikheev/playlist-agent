@@ -172,12 +172,19 @@ def make_graph(catalogue, model, events):
         total = schedule[-1][2]
         expected = spec.length.target_track_count or max(1, round(total / 210000))
         pools = {}
+        reserved = set()
         for phase, start, end in schedule:
             desired = max(1, round(expected * (end - start) / total))
             size = min(180, max(30, desired * 4 + 8))
             candidates = catalogue.search(spec, phase, min(8000, max(2500, size * 25)))
             candidates.sort(key=lambda track: feature_cost(track, phase))
+            available = [
+                track for track in candidates if track["track_id"] not in reserved
+            ]
+            if len(available) >= min(size, desired * 2):
+                candidates = available
             pools[phase.id] = diverse_shortlist(candidates, size)
+            reserved.update(track["track_id"] for track in pools[phase.id])
             if not pools[phase.id] and phase.id not in state["frozen_phases"]:
                 return {
                     "clarification": f"Для фазы {phase.id} не найдено треков с обязательными фильтрами. Какие ограничения можно изменить?"
@@ -200,10 +207,18 @@ def make_graph(catalogue, model, events):
         ]
         ranking_spec = state["spec"].model_copy(update={"phases": phases})
         scores = await model.rank(ranking_spec, state["pools"])
+        pools = {
+            phase_id: pool
+            if phase_id in state["frozen_phases"]
+            else [
+                track for track in pool if track["track_id"] in scores.get(phase_id, {})
+            ]
+            for phase_id, pool in state["pools"].items()
+        }
         events.append(
             {"stage": "rank", "seconds": round(time.perf_counter() - started, 3)}
         )
-        return {"scores": scores}
+        return {"scores": scores, "pools": pools}
 
     def assemble(state):
         started = time.perf_counter()
@@ -271,6 +286,17 @@ def make_graph(catalogue, model, events):
                 continue
             candidates = catalogue.search(state["spec"], phase, 8000)
             candidates.sort(key=lambda track: feature_cost(track, phase))
+            reserved = {
+                track["track_id"]
+                for key, pool in pools.items()
+                if key != phase.id
+                for track in pool
+            }
+            available = [
+                track for track in candidates if track["track_id"] not in reserved
+            ]
+            if len(available) >= sizes[phase.id]:
+                candidates = available
             expanded = diverse_shortlist(candidates, sizes[phase.id])
             if len(expanded) > len(old):
                 pools[phase.id] = expanded
