@@ -4,6 +4,11 @@ Design notes checked on 4 November 2026. Infrastructure has not been deployed.
 The demo uses Gemini Developer API and a Cloud Run service. Actual model access
 and RPM/TPM/RPD limits must be checked in the selected AI Studio project.
 
+The independent implementation now lives in `cloud_app/`. See
+[manual Console setup](gcp-console.md) for actual defaults, record layout,
+verification and differences from the conservative planning estimates below.
+No GCP infrastructure is created by the application.
+
 ## Implementation order and application boundary
 
 First build and evaluate the local Gemini application. Record latency, tokens,
@@ -61,7 +66,7 @@ request still contributes to the request's billable duration.
 ## Persistence and admission
 
 Local JSON snapshots remain sufficient for local development. The public service
-needs external durable state, proposed as Firestore: quota counters, run records
+needs external durable state in Firestore: quota counters, run records
 and any conversations that must survive instance replacement. The catalogue is
 read-only; no quota may rely on a local file or warm-process memory.
 
@@ -102,6 +107,134 @@ token budgets can reduce actual admissions. Future windows cannot be borrowed.
 Track Gemini's provider-day quota separately from the Paris calendar day. Return
 the next actual admission time and a clear free-demo explanation when closed or
 exhausted. A prepared example remains available as a labeled example.
+
+## Guest ownership and IP budget
+
+Use a cryptographically random guest secret in an HttpOnly, Secure, SameSite=Lax
+cookie. Derive its owner identifier server-side; never accept a client-supplied
+owner ID as authorization. Conversation IDs are separate identifiers, and every
+list/read/write/export checks ownership. Do not log cookie secrets. Firestore
+server SDK access requires these application checks, irrespective of client
+Security Rules. The catalogue remains in the image; cloud audits go to private
+Cloud Logging rather than a writable audit database in the container.
+
+In addition to a guest limit of S runs, admit at most 3*S runs per trusted client
+IP in a rolling eight-hour window. Different cookies share that IP allowance.
+Only trust forwarded IP information from the configured Cloud Run proxy chain.
+Use a keyed hash of the normalized IP for quota keys. Started model work remains
+charged to this anti-abuse counter even when an unavailable model returns the
+guest allowance. Declines before model work do not consume a run. Global run,
+provider-attempt and token reservations are independent of both cookies and IPs.
+
+## Public limit messages
+
+These are agreed cloud UI texts, not implemented admission behavior in the local
+application. All quota/schedule denials include this shared explanation:
+
+> This is a free, publicly hosted demo. Usage limits help keep it free and give
+> other visitors a chance to try it too.
+
+Prepend a specific reason, then show the next eligible date/time and timezone
+when it can be calculated. Show an existing playlist/prepared example without
+making a model call. Do not promise the next attempt will succeed: other budgets
+or provider availability can still prevent admission.
+
+| Reason | English text before the shared explanation |
+| --- | --- |
+| Guest allowance | You have reached your guest demo limit. You can try again after {time}. |
+| IP allowance | This network has reached its eight-hour demo limit. People sharing Wi-Fi or a VPN share this allowance. You can try again after {time}. |
+| Daily global allowance | Today's demo allowance has been used up, likely by earlier visitors. The next daily allowance starts at {time}. |
+| Current Paris window | This time window's demo allowance has been used up. The next eligible window opens at {time}. |
+| Token budget | The demo's AI usage budget has been reached. New requests are paused until {time}. |
+| Provider quota, reset unknown | The AI provider has temporarily limited this free demo. Please try again later. |
+| Per-request resource limit | This request exceeds the demo's per-request limits. Please try a shorter or simpler request. |
+| Overnight closure | Live generation is paused overnight to conserve the demo allowance. It resumes at 07:00 Paris time. |
+| Storage/maintenance budget | New requests are temporarily paused while the demo's storage is maintained. Please try again later. |
+
+Infrastructure failures get their actual reason rather than being labeled quota
+exhaustion. If quota storage is unavailable, say the allowance could not be
+verified and that no request was sent to the AI model. Exact retry times are
+omitted when unknown. Guest allowance refunds never imply that provider usage,
+IP anti-abuse usage or uncertain token reservations were refunded.
+
+## Bounded Firestore retention
+
+This is a proposed schema/retention contract to implement and check before
+deployment. Current Firestore Standard free usage is 1 GiB storage, 50,000 reads,
+20,000 writes and 20,000 ordinary deletes per day for one eligible database.
+Its operation quotas reset around midnight Pacific time, separately from the
+Paris admission day. Managed TTL deletes have no free usage, so do not enable
+Firestore TTL, PITR, backups or automatic clones for this demo.
+
+Store only bounded conversation context, playlist IDs, specifications, usage
+and idempotent run records. Hydrate track metadata from the SQLite catalogue;
+do not duplicate the catalogue, exports, raw provider responses or security
+audits in Firestore. Exempt conversation payloads, arrays and large maps from
+indexing; keep only indexes actually required for owner queries and expiration.
+The storage budget must include document names, metadata and all retained indexes.
+
+Initial design parameters:
+
+| Symbol | Proposed value | Meaning |
+| --- | ---: | --- |
+| G | 20/day | All newly admitted runs, including ones that later fail; guest refunds do not refund this creation budget |
+| d | 6 | Maximum new documents attributable to one admission; repeated model attempts update the run record rather than create more documents |
+| B | 96 KiB | Conservative per-document storage envelope, including indexes/metadata; payload at most 64 KiB and schema/index overhead must fit the remainder |
+| R | 7 days | Absolute lifetime of conversations and ordinary run records, measured from creation; edits do not indefinitely extend it |
+| K | 1 day | Maximum interval between cleanup checks while the app is serving requests |
+| F | 1 MiB | Reserved envelope for a fixed, bounded set of control records |
+| M | 128 MiB | Application high-water budget, leaving headroom below the free storage allowance |
+
+For arbitrary alignment with Paris calendar days, a conservative storage bound is
+
+```text
+N <= G * d * (R + K + 1)
+storage <= F + N * B
+        <= 1 MiB + 20 * 6 * 9 * 96 KiB
+        = 102.25 MiB < M = 128 MiB
+```
+
+Thus growth is O(G*d*B*(R+K)), rather than unbounded with page visits. More
+generally choose K so F+G*d*B*(R+K+1) <= M; if that has no positive solution,
+reduce retention/document size/admissions rather than borrow the free-tier
+headroom. These are design bounds, not measurements of a deployed schema.
+Verify d and B using the actual serializers and Firestore storage-size rules.
+
+Cookie creation, empty conversations and denied requests must not create owner,
+IP, session or run documents. Check global admission first in the transaction,
+then reserve both model resources and the storage envelope before creating any
+records. New control records also count against a bounded creation allowance.
+Refuse new admissions if cleanup cannot keep the accounted storage below M.
+Updating a conversation must enforce its size cap, not append unlimited history.
+
+Use expires_at as an application field, not a managed TTL policy. On the first
+request after a cleanup interval, acquire a distributed cleanup lease and delete
+expired records in pages of at most 200. Cap maintenance at 1,200 document reads
+and 1,200 deletes per Firestore quota day, accounting for queries/retries and
+control writes separately. At G*d <= 120 new documents/day on a Paris day,
+that covers normal churn and approximately one retained-window catch-up batch.
+For a Pacific quota day allow for up to two partial Paris admission days.
+
+Expired conversations become inaccessible immediately, even if physical cleanup
+is deferred. With no requests, an idle Cloud Run service need not wake solely for
+cleanup: no new admission documents accumulate. Before admitting new work after
+inactivity, process the bounded backlog; if the maintenance budget is insufficient,
+stay closed until it can be cleared. This bounds storage without promising a
+physical deletion deadline while the service is asleep.
+
+Never delete a still-effective quota counter, an in-flight reservation or an
+idempotency record needed to reconcile uncertain usage. Set their expiration
+after the latest applicable quota/hold/retry interval, retaining longer when
+necessary. A cleanup failure must not reset exhausted limits.
+If records must outlive R for unresolved usage, include a separate bounded
+reservation for them or recompute the R-based bound. The M admission ceiling
+still applies; retaining unresolved state must not create unbounded exceptions.
+
+This bounds retained data, not arbitrary public HTTP traffic. Denied requests,
+repeated restores, exports, transaction retries and console inspection can still
+consume reads/operations. Those need their own throttles and operation budgets.
+Cloud Logging retention, byte volume and abuse-event rates are separate limits;
+Firestore cleanup does not constrain them.
 
 ## Revised limits to measure
 
@@ -145,3 +278,6 @@ are an additional safeguard, with enforcement delay and billable overages.
 - [Gemini thinking and output limits](https://aistudio.google.com/docs/thinking)
 - [Gemini rate limits](https://aistudio.google.com/docs/rate-limits)
 - [Cloud spend caps](https://docs.cloud.google.com/billing/docs/how-to/budgets-spend-caps)
+- [Firestore free quotas and paid TTL deletes](https://firebase.google.com/docs/firestore/quotas#free-quota)
+- [Firestore storage-size accounting](https://firebase.google.com/docs/firestore/storage-size)
+- [Firestore TTL behavior](https://firebase.google.com/docs/firestore/ttl)

@@ -1,0 +1,8 @@
+{
+  "indexes": [],
+  "fieldOverrides": [
+    {"collectionGroup": "playlist_demo_records", "fieldPath": "payload", "indexes": []},
+    {"collectionGroup": "playlist_demo_control", "fieldPath": "payload", "indexes": []},
+    {"collectionGroup": "playlist_demo_control", "fieldPath": "expires_at", "indexes": []}
+  ]
+}

@@ -256,6 +256,13 @@ prompt; this preflight is separate from successful recommendation measurements.
 
 ## Next milestones
 
+The separate [GCP application](docs/gcp-console.md) now has guest cookie ownership,
+Firestore admission/retention, IP and global budgets, private exports and structured
+audit output. Its entry point is `python -m cloud_app`, with a separate
+`Dockerfile.cloud` and dependency lock. Infrastructure is configured manually in
+the web consoles; no deployment is performed by the code. The local Gradio app
+and its dependencies remain separate.
+
 The [15-request benchmark](docs/request-benchmark.md) now compares catalogue-backed
 reference examples with saved Gemini outputs. Run `python benchmark.py` to rebuild
 the local HTML/Markdown comparison without API calls, or `python benchmark.py --live`

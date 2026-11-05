@@ -1,0 +1,186 @@
+:root {
+  font: 16px/1.5 system-ui, sans-serif;
+  color: #192638;
+  background: #f5f7fa;
+  color-scheme: light;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+main {
+  max-width: 1350px;
+  margin: 32px auto;
+  padding: 0 24px;
+}
+
+h1 {
+  font-size: 2.2rem;
+  margin-bottom: 4px;
+}
+
+h2 {
+  font-size: 1.15rem;
+}
+
+header p {
+  color: #59677b;
+  margin-top: 0;
+}
+
+.notice {
+  background: #e8efff;
+  border-left: 4px solid #365bd6;
+  padding: 14px 18px;
+  border-radius: 4px;
+}
+
+.privacy {
+  font-size: 0.85rem;
+  color: #59677b;
+}
+
+.layout {
+  display: grid;
+  grid-template-columns: minmax(280px, 1fr) minmax(450px, 1.6fr);
+  gap: 24px;
+}
+
+section {
+  background: white;
+  padding: 20px;
+  border: 1px solid #dfe5ed;
+  border-radius: 12px;
+  min-width: 0;
+}
+
+nav {
+  display: flex;
+  gap: 10px;
+  margin: 20px 0;
+}
+
+nav select {
+  flex: 1;
+  min-width: 0;
+}
+
+button,
+select,
+textarea {
+  font: inherit;
+  border: 1px solid #bcc7d8;
+  border-radius: 6px;
+  padding: 9px 12px;
+}
+
+button {
+  cursor: pointer;
+  background: #fff;
+  color: #192638;
+}
+
+button:disabled {
+  opacity: 0.55;
+  cursor: wait;
+}
+
+#build {
+  background: #365bd6;
+  color: white;
+  width: 100%;
+  margin-top: 10px;
+}
+
+textarea {
+  width: 100%;
+  resize: vertical;
+  margin-top: 6px;
+}
+
+#chat {
+  max-height: 380px;
+  overflow: auto;
+  white-space: pre-wrap;
+}
+
+.user,
+.assistant {
+  padding: 12px;
+  border-radius: 8px;
+}
+
+.user {
+  background: #edf1ff;
+}
+
+.assistant {
+  background: #f3f5f8;
+}
+
+.interpretation {
+  white-space: pre-wrap;
+  font-size: 0.9rem;
+}
+
+#status {
+  white-space: pre-wrap;
+}
+
+#progress {
+  color: #53617a;
+}
+
+#chart img {
+  width: 100%;
+  height: auto;
+}
+
+.scroll {
+  overflow: auto;
+  max-height: 650px;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+}
+
+td,
+th {
+  text-align: left;
+  padding: 10px;
+  border-bottom: 1px solid #e4e8ef;
+}
+
+th {
+  position: sticky;
+  top: 0;
+  background: #f5f7fa;
+}
+
+a {
+  color: #234fbd;
+}
+
+#metrics {
+  color: #59677b;
+  font-size: 0.85rem;
+}
+
+@media (max-width: 850px) {
+  .layout {
+    grid-template-columns: 1fr;
+  }
+
+  nav {
+    flex-wrap: wrap;
+  }
+
+  main {
+    padding: 0 12px;
+    margin-top: 18px;
+  }
+}

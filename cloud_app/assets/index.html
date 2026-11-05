@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Playlist Agent</title>
+  <link rel="stylesheet" href="/assets/style.css">
+  <script src="/assets/app.js" defer></script>
+</head>
+<body>
+<main>
+  <header>
+    <h1>Playlist Agent</h1>
+    <p>Describe the music. Build a playlist. Refine it in conversation.</p>
+  </header>
+
+  <p class="notice">
+    This is a free, publicly hosted demo. Usage limits help keep it free and give
+    other visitors a chance to try it too. Live generation is available
+    07:00–00:00 Paris time.
+  </p>
+  <p class="privacy">
+    Conversations stay available in this browser for up to seven days. Clearing
+    its guest cookie removes your access. Rejected requests are logged with their
+    content, connection IP and redacted request metadata.
+  </p>
+
+  <nav aria-label="Conversations">
+    <select id="sessions" aria-label="Saved conversations">
+      <option value="">New conversation</option>
+    </select>
+    <button id="open" type="button">Open</button>
+    <button id="new" type="button">New conversation</button>
+  </nav>
+  <div class="layout">
+    <section>
+      <h2>Conversation</h2>
+      <div id="chat" aria-live="polite"></div>
+      <form id="generate">
+        <label for="request">Your request</label>
+        <textarea
+          id="request"
+          maxlength="2000"
+          rows="4"
+          required
+          placeholder="A one-hour gym playlist: heavy metal with at least one pop song"
+        ></textarea>
+        <button id="build" type="submit">Build / refine</button>
+      </form>
+      <p id="progress" role="status"></p>
+      <h2>Interpreted request</h2>
+      <div id="interpretation" class="interpretation"></div>
+    </section>
+
+    <section>
+      <h2>Your playlist</h2>
+      <p id="status" role="status">Start by describing a duration or track count and your musical preferences.</p>
+      <div id="chart"></div>
+      <p id="metrics"></p>
+      <div class="scroll">
+        <table>
+          <thead>
+            <tr>
+              <th>Keep</th>
+              <th>#</th>
+              <th>Track</th>
+              <th>Artists</th>
+              <th>Minutes</th>
+              <th>Energy</th>
+              <th>Spotify</th>
+            </tr>
+          </thead>
+          <tbody id="tracks"></tbody>
+        </table>
+      </div>
+      <p id="exports" hidden>
+        <a id="csv">Download CSV</a> · <a id="json">Download JSON</a>
+      </p>
+      <p class="privacy">
+        Keep selects tracks to retain on the next refinement. Musical metadata can
+        be imperfect; recommendations are a demonstration, not verified listening
+        advice.
+      </p>
+    </section>
+  </div>
+</main>
+</body>
+</html>
