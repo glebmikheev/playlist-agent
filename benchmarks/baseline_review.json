@@ -1,0 +1,82 @@
+{
+  "model": "gemini-3.5-flash-lite",
+  "date": "2026-11-04",
+  "basis": "Editorial inspection of supplied requests, catalogue metadata and musical repertoire; no audio listening and no independent listener study. Reference track overlap is not scored.",
+  "cases": {
+    "1": {
+      "result_sha256": "9abcfb6c3e3d47df300ee1bc91ec84a0696000d8e0ce07c5db731949d7db79e6",
+      "verdict": "fail",
+      "note": "Metallica is absent. Gym intent is also weakly represented: the initial shortlist is centred on energy 0.5 rather than energetic metal."
+    },
+    "2": {
+      "result_sha256": "03517bd1af89df5a08a646b40b97eb9c60920ce19ca078ed82fa8d876d568174",
+      "verdict": "fail",
+      "note": "All 17 tracks have a pop label and none has a metal-family label. The requested metal playlist became a pop playlist."
+    },
+    "3": {
+      "result_sha256": "03517bd1af89df5a08a646b40b97eb9c60920ce19ca078ed82fa8d876d568174",
+      "verdict": "fail",
+      "note": "Identical track IDs and order to case 2; there is no metal component and the requested mainstream singalong pop character is not preserved."
+    },
+    "4": {
+      "result_sha256": "dd8c24802e1bdc1878dbeeefaddf8fbb50b0bd8c6c9f6e5bb4a8d262e8c68916",
+      "verdict": "fail",
+      "note": "23 tracks meets the requested range, but Metallica appears zero times. Most selections do not match the intended nostalgic mainstream singalong pop style."
+    },
+    "5": {
+      "result_sha256": "a088297e79d44d7f20fc1c29ae111bd41d4da167f411e6971b13b4e657386f92",
+      "verdict": "acceptable",
+      "note": "Correctly asks for duration or count instead of silently inventing a playlist length."
+    },
+    "6": {
+      "result_sha256": "8d65be87239b1b294af9682f357cf0f0fa9b6c4bb5a4dad16fa9ff5a81098950",
+      "verdict": "plausible",
+      "note": "Eight tracks, 23.63 minutes, metadata tempos about 142–170 BPM and energies about 0.76–0.84. Plausible running selection; perceived pulse and transitions have not been listened to."
+    },
+    "7": {
+      "result_sha256": "a088297e79d44d7f20fc1c29ae111bd41d4da167f411e6971b13b4e657386f92",
+      "verdict": "incomplete",
+      "note": "The agent asks to drop the exact country/classical counts as unverifiable, even though catalogue-backed examples can satisfy those counts. No playlist is delivered."
+    },
+    "8": {
+      "result_sha256": "8e6681881ae6a5feb17bf37ecff06478137a012748fbb030d60dda1903d21ab7",
+      "verdict": "fail",
+      "note": "Dream Theater — The Spirit Carries On is included because it has a misleading classical tag. The result also mixes soundtrack/contemporary works into a request for representative classical repertoire without explanation."
+    },
+    "9": {
+      "result_sha256": "cabd685e736b6b799efa4da14ac8f4ff19daf4740d89c285edb79c6328b5a037",
+      "verdict": "fail",
+      "note": "Only the first of five tracks is credited to Mozart; the others are Einaudi, Jóhannsson, Elgar and Vivaldi. The sole Mozart work is a short German dance, not a convincing top-five selection."
+    },
+    "10": {
+      "result_sha256": "165131405fbdae072d738dfd1c75c7f1d1a1b74397c55c8509eef6c0c0b21302",
+      "verdict": "error",
+      "note": "After an initial provider 429, an explicit later retry reaches ranking but selects no valid candidates for a phase. No tense-ending Mozart playlist is delivered."
+    },
+    "11": {
+      "result_sha256": "a088297e79d44d7f20fc1c29ae111bd41d4da167f411e6971b13b4e657386f92",
+      "verdict": "incomplete",
+      "note": "Symphony 40 is treated as an exact track reference, then rejected as missing or ambiguous, rather than excluding all recordings of the work."
+    },
+    "12": {
+      "result_sha256": "df4cdf60a55e18ee1fa3f67bfdbec8c0c98c5e8c41f7c3903ee5a28791c948fe",
+      "verdict": "partial",
+      "note": "Mostly plausible instrumental lo-fi study music by metadata. Includes lively repertoire such as Hungarian Dance No. 5, Rage Over a Lost Penny and a Nutcracker March, plus two recordings of Rondo alla turca. Low energy does not establish a calm musical character."
+    },
+    "13": {
+      "result_sha256": "64942fce6192ea40334895a0c410d4eb1c097f5ca57e88293bd30021c5b07659",
+      "verdict": "partial",
+      "note": "A hip-hop track is present at the midpoint, but the middle block also contains reggaeton. I Will Follow You into the Dark appears twice under different IDs. Opening/ending cohesion still needs listening."
+    },
+    "14": {
+      "result_sha256": "274d1a1c5aa5e523f350f9bd32cc95faf39515cb24db5ed2ac1f74ed1d049e5d",
+      "verdict": "fail",
+      "note": "The first three tracks are pop, but most of the remaining selection is Punjabi or other non-East/West-Coast rap. Coolio supplies a West Coast example; a corresponding East Coast selection is missing."
+    },
+    "15": {
+      "result_sha256": "468fc682443b3be236463ed18cbcebba94440645ccfd69832c3fe7a0396d6dce",
+      "verdict": "partial",
+      "note": "A quieter second phase exists in the metadata, but marches, Hungarian Dance No. 5 and overture material remain in the supposed sleep transition. A numerical energy decrease does not demonstrate a smooth settling sequence."
+    }
+  }
+}

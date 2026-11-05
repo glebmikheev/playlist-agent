@@ -28,27 +28,33 @@ def create_app(
     session_dir=ROOT / "data/sessions",
     audit_path=ROOT / "data/security/audit.sqlite",
 ):
-    catalogue, store = Catalogue(catalogue_path), SessionStore(session_dir)
+    catalogue = Catalogue(catalogue_path)
+    store = SessionStore(session_dir)
 
     def render(snapshot):
         attempt = snapshot.get("last_attempt", {})
         ids = snapshot.get("playlist_ids", [])
         spec_data = snapshot.get("spec")
         if not ids and attempt.get("playlist_ids"):
-            ids, spec_data = attempt["playlist_ids"], attempt["spec"]
+            ids = attempt["playlist_ids"]
+            spec_data = attempt["spec"]
+
         tracks = catalogue.tracks(ids)
         spec = PlaylistSpec.model_validate(spec_data) if spec_data else None
-        files = (
-            export_playlist(ROOT / "data/exports", snapshot["session_id"], spec, tracks)
-            if spec and tracks
-            else []
-        )
+        if spec and tracks:
+            files = export_playlist(
+                ROOT / "data/exports", snapshot["session_id"], spec, tracks
+            )
+        else:
+            files = []
+
         status = attempt.get(
             "message",
             "Describe the duration or track count and your musical preferences.",
         )
         if tracks:
-            status += f"\n\n**{len(tracks)} tracks · {sum(track['duration_ms'] for track in tracks) / 60000:.1f} min.**"
+            total_minutes = sum(track["duration_ms"] for track in tracks) / 60000
+            status += f"\n\n**{len(tracks)} tracks · {total_minutes:.1f} min.**"
         if attempt.get("status") in {
             "failed",
             "error",
@@ -58,7 +64,11 @@ def create_app(
             status += "\n\nShowing the last accepted playlist."
         if attempt.get("changes"):
             change = attempt["changes"]
-            status += f"\n\nAdded: {change['added']}; removed: {change['removed']}; retained: {change['retained']}."
+            status += (
+                f"\n\nAdded: {change['added']}; removed: {change['removed']}; "
+                f"retained: {change['retained']}."
+            )
+
         details = {
             "status": attempt.get("status"),
             "interpreted_spec": snapshot.get("draft_spec") or spec_data,
@@ -68,20 +78,23 @@ def create_app(
             "audit_event_id": attempt.get("audit_event_id"),
             "usage": snapshot.get("usage"),
         }
+
+        draft_data = snapshot.get("draft_spec") or spec_data
         return (
             snapshot.get("messages", []),
             status,
-            describe_spec(
-                PlaylistSpec.model_validate(snapshot.get("draft_spec") or spec_data)
-            )
-            if snapshot.get("draft_spec") or spec_data
+            describe_spec(PlaylistSpec.model_validate(draft_data))
+            if draft_data
             else "",
-            table_rows(tracks),
+            table_rows(tracks, clickable_links=True),
             profile_svg(spec, tracks) if spec else "",
             gr.update(
                 choices=[
-                    (f"{i}. {track['title']} — {track['artists']}", track["track_id"])
-                    for i, track in enumerate(tracks, 1)
+                    (
+                        f"{index}. {track['title']} — {track['artists']}",
+                        track["track_id"],
+                    )
+                    for index, track in enumerate(tracks, 1)
                 ],
                 value=spec.locked_track_ids if spec else [],
             ),
@@ -99,11 +112,13 @@ def create_app(
     async def submit(message, session_id, locked_ids, request: gr.Request):
         if not message.strip() or len(message) > 2000:
             raise gr.Error("Enter a message between 1 and 2,000 characters.")
+
         snapshot = store.load(session_id or str(uuid.uuid4()))
         if snapshot.get("spec"):
             snapshot["spec"]["locked_track_ids"] = list(locked_ids)
             if snapshot.get("draft_spec"):
                 snapshot["draft_spec"]["locked_track_ids"] = list(locked_ids)
+
         settings = Settings.load()
         try:
             client = GeminiClient(settings)
@@ -116,6 +131,7 @@ def create_app(
                 )
             finally:
                 await client.close()
+
         if result["status"] == "rejected":
             metadata = await request_details(
                 request, message, snapshot["session_id"], locked_ids
@@ -126,13 +142,15 @@ def create_app(
                 )
             except (OSError, sqlite3.Error):
                 result["message"] = (
-                    "This request is not allowed. Audit storage is unavailable; the request was rejected."
+                    "This request is not allowed. Audit storage is unavailable; "
+                    "the request was rejected."
                 )
             else:
                 result["audit_event_id"] = event_id
                 result["message"] = rejection_message(
                     metadata["client_ip"], result["moderation"]["category"]
                 )
+
         store.save(update_snapshot(snapshot, message, result))
         return (*render(snapshot), message if result["status"] == "error" else "")
 
@@ -158,11 +176,15 @@ def create_app(
 
     with gr.Blocks(title="Playlist Agent", analytics_enabled=False) as app:
         gr.Markdown(
-            "# Playlist Agent\nBuild and refine playlists with Gemini, real catalogue tracks and checked constraints."
+            "# Playlist Agent\n"
+            "Build and refine playlists with Gemini, real catalogue tracks and "
+            "checked constraints."
         )
         gr.Markdown(
-            "For abuse prevention, rejected requests are logged with the submitted text, connection IP and redacted HTTP metadata."
+            "For abuse prevention, rejected requests are logged with the submitted "
+            "text, connection IP and redacted HTTP metadata."
         )
+
         session_id = gr.State("")
         with gr.Row():
             sessions = gr.Dropdown(
@@ -170,13 +192,17 @@ def create_app(
             )
             restore_button = gr.Button("Open")
             new_button = gr.Button("New conversation")
+
         with gr.Row():
             with gr.Column(scale=1):
                 chat = gr.Chatbot(label="Conversation", height=330)
                 message = gr.Textbox(
                     label="Request",
                     lines=3,
-                    placeholder="50 minutes of electronic music for a walk: energetic middle, calm ending...",
+                    placeholder=(
+                        "50 minutes of electronic music for a walk: energetic "
+                        "middle, calm ending..."
+                    ),
                 )
                 submit_button = gr.Button("Build / refine", variant="primary")
                 gr.Examples(
@@ -189,6 +215,7 @@ def create_app(
                     cache_examples=False,
                 )
                 spec_view = gr.Markdown()
+
             with gr.Column(scale=2):
                 status = gr.Markdown()
                 plot = gr.HTML()
@@ -202,15 +229,26 @@ def create_app(
                         "Genres",
                         "Spotify",
                     ],
-                    datatype=["number", "str", "str", "number", "number", "str", "str"],
+                    datatype=[
+                        "number",
+                        "str",
+                        "str",
+                        "number",
+                        "number",
+                        "str",
+                        "markdown",
+                    ],
                     interactive=False,
                 )
                 locks = gr.Dropdown(choices=[], multiselect=True, label="Locked tracks")
                 files = gr.File(
-                    label="Export CSV / JSON", file_count="multiple", interactive=False
+                    label="Export CSV / JSON",
+                    file_count="multiple",
+                    interactive=False,
                 )
                 with gr.Accordion("Checks and metrics", open=False):
                     details = gr.JSON()
+
         outputs = [
             chat,
             status,
@@ -249,6 +287,7 @@ def create_app(
         )
         new_button.click(new_session, outputs=outputs, api_name=False)
         restore_button.click(restore, sessions, outputs, api_name="restore")
+
         core_asset = next(
             (Path(gr.__file__).parent / "templates/frontend/assets").glob("core-*.js")
         ).name

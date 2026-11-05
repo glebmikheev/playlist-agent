@@ -256,6 +256,14 @@ prompt; this preflight is separate from successful recommendation measurements.
 
 ## Next milestones
 
+The [15-request benchmark](docs/request-benchmark.md) now compares catalogue-backed
+reference examples with saved Gemini outputs. Run `python benchmark.py` to rebuild
+the local HTML/Markdown comparison without API calls, or `python benchmark.py --live`
+for missing cases. Seven responses pass the limited mechanical checks, but semantic
+review exposes missing mandatory artists, composer mistakes and weak genre/phase
+control. Address those before selecting public cloud quotas. Generated reports stay
+outside Git.
+
 Complete live evaluation with the selected model, then tune
 thinking, prompt/pool size and output allowance. Choose cloud quotas from those
 measurements and build the independent GCP entry point. Spotify connection and

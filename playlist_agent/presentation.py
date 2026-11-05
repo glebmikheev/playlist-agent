@@ -103,7 +103,7 @@ def profile_svg(spec, tracks):
     return "".join(parts)
 
 
-def table_rows(tracks):
+def table_rows(tracks, clickable_links=False):
     return [
         [
             index,
@@ -112,7 +112,9 @@ def table_rows(tracks):
             round(track["duration_ms"] / 60000, 2),
             track["energy"],
             ", ".join(track["genres"]),
-            f"https://open.spotify.com/track/{track['track_id']}",
+            f"[Open in Spotify](https://open.spotify.com/track/{track['track_id']})"
+            if clickable_links
+            else f"https://open.spotify.com/track/{track['track_id']}",
         ]
         for index, track in enumerate(tracks, 1)
     ]

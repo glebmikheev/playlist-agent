@@ -1,0 +1,175 @@
+[
+  {
+    "id": 1,
+    "prompt": "make a gym playlist with heavy metal, include Metallica at least once, 2h duration",
+    "duration_s": 7200,
+    "artist_min": {
+      "metallica": 1
+    },
+    "required_styles": [
+      "metal"
+    ],
+    "notes": "Heavy metal includes traditional heavy metal and closely related thrash metal; Metallica is mandatory."
+  },
+  {
+    "id": 2,
+    "prompt": "make a 1h gym playlist with heavy metal, include at least one pop song",
+    "duration_s": 3600,
+    "genre_min": {
+      "pop": 1
+    },
+    "required_styles": [
+      "metal"
+    ],
+    "notes": "Mostly metal; at least one unambiguous pop track."
+  },
+  {
+    "id": 3,
+    "prompt": "make a 1h gym playlist as a mix of heavy metal and girly pop songs",
+    "duration_s": 3600,
+    "required_styles": [
+      "metal",
+      "mainstream_pop"
+    ],
+    "notes": "Both styles should have a substantial presence; 30-70% of playback time per style is a review target, not an explicit user quota."
+  },
+  {
+    "id": 4,
+    "prompt": "make a white girl pop songs playlist and also add Metallica twice up 20-26 songs",
+    "count_range": [
+      20,
+      26
+    ],
+    "artist_exact": {
+      "metallica": 2
+    },
+    "required_styles": [
+      "mainstream_pop"
+    ],
+    "notes": "Interpret as nostalgic mainstream singalong/dance pop, not an ethnicity filter. Reference chooses 24 tracks with two distinct Metallica songs."
+  },
+  {
+    "id": 5,
+    "prompt": "I need birthday party playlist, positive and light music",
+    "expected_action": "clarification",
+    "notes": "No duration/count supplied. Ask a concise length question; a playlist is acceptable only if an explicit visible default is agreed. Candidate suggestions are provided separately."
+  },
+  {
+    "id": 6,
+    "prompt": "I need a running playlist with fast beats 25 minutes",
+    "duration_s": 1500,
+    "required_styles": [
+      "running"
+    ],
+    "notes": "Fast, steady perceived pulse. BPM is a proxy and may be half/double-time; do not equate BPM with cadence or give medical advice."
+  },
+  {
+    "id": 7,
+    "prompt": "ambient music and rock, 50 minutes + 3 country songs and 1 classical music track",
+    "duration_s": 3000,
+    "genre_exact": {
+      "country": 3,
+      "classical": 1
+    },
+    "required_styles": [
+      "ambient",
+      "rock"
+    ],
+    "notes": "Treat 50 minutes as total duration including the four additions. Exact genre counts use the catalogue labels; overlapping genre labels are reported."
+  },
+  {
+    "id": 8,
+    "prompt": "best songs of classical music 1h playlist",
+    "duration_s": 3600,
+    "required_styles": [
+      "western_classical"
+    ],
+    "notes": "Representative established classical repertoire; best is subjective. Catalogue classical labels alone are insufficient."
+  },
+  {
+    "id": 9,
+    "prompt": "top 5 iconic Mozart songs",
+    "count_range": [
+      5,
+      5
+    ],
+    "composer": "wolfgang amadeus mozart",
+    "required_styles": [
+      "iconic_mozart"
+    ],
+    "notes": "Five distinct recognisable works/movements, not five releases of one recording. Prefer complete movements where available; disclose catalogue excerpts."
+  },
+  {
+    "id": 10,
+    "prompt": "top 5 iconic Mozart songs with tension in the end",
+    "count_range": [
+      5,
+      5
+    ],
+    "composer": "wolfgang amadeus mozart",
+    "required_styles": [
+      "iconic_mozart"
+    ],
+    "notes": "Final work should be musically tense, e.g. Symphony 25 first movement. Tension is not reducible to Spotify energy."
+  },
+  {
+    "id": 11,
+    "prompt": "top 5 iconic Mozart songs except for Symphony 40",
+    "count_range": [
+      5,
+      5
+    ],
+    "composer": "wolfgang amadeus mozart",
+    "exclude_title_patterns": [
+      "\\bsymphony\\s*(?:no\\.?\\s*)?40\\b",
+      "\\bk\\.?\\s*550\\b"
+    ],
+    "required_styles": [
+      "iconic_mozart"
+    ],
+    "notes": "Exclude every version/movement of Symphony 40, K.550."
+  },
+  {
+    "id": 12,
+    "prompt": "top high productivity study music 3h playlist: peacefull and calm",
+    "duration_s": 10800,
+    "required_styles": [
+      "calm_instrumental"
+    ],
+    "notes": "Low-distraction instrumental music; productivity is a preference, not an efficacy claim."
+  },
+  {
+    "id": 13,
+    "prompt": "relaxaton in sauna 40 minutes + hip hop in the middle",
+    "duration_s": 2400,
+    "middle_genre": "hip-hop",
+    "required_styles": [
+      "relaxation"
+    ],
+    "notes": "40 minutes total. A short, clearly central hip-hop section is intentional; use relatively relaxed tracks."
+  },
+  {
+    "id": 14,
+    "prompt": "a mix of east coast and west coast rap, but first 3 songs must be pop, 45 mins",
+    "duration_s": 2700,
+    "prefix_genre": {
+      "genre": "pop",
+      "count": 3
+    },
+    "required_styles": [
+      "east_coast_rap",
+      "west_coast_rap"
+    ],
+    "notes": "First three tracks pop, followed by both rap traditions. Regional style needs curated artist/work annotation; no region field exists in the catalogue."
+  },
+  {
+    "id": 15,
+    "prompt": "start with classical music and smoothly go to relaxing music to sleep well, 90 mins",
+    "duration_s": 5400,
+    "required_styles": [
+      "western_classical",
+      "sleep_transition"
+    ],
+    "notes": "Classical opening, gradual move to quiet ambient/piano. Avoid claiming verified sleep benefits."
+  }
+]
