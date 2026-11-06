@@ -288,3 +288,10 @@ measurements and build the independent GCP entry point. Spotify connection and
 playlist saving follow the core demo. The [design](playlist-agent-mvp-design.md)
 records the original scope; [cloud notes](docs/cloud-demo.md) record deferred
 deployment choices. MPD remains a later continuation experiment.
+
+## TODO
+
+- [ ] List new owner-mode conversations under **Open** after a page reload.
+  Register those conversations without charging the guest quota.
+- [ ] Correct the catalogue EDA comment. The source rename map goes from old
+  names to new names, and the notebook inverts it to select the original CSV columns.

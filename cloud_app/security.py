@@ -11,34 +11,38 @@ from playlist_agent.security import redact
 
 from .policy import Denied
 
+OWNER_COOKIE_AGE = 8 * 3600
 
-def cookie_name(config):
+
+def cookie_name(config, *, owner=False):
+    role = "owner" if owner else "guest"
     if config.secure_cookie:
-        return "__Host-playlist_guest"
-    return "playlist_guest_local"
+        return f"__Host-playlist_{role}"
+    return f"playlist_{role}_local"
 
 
-def new_cookie(config, now):
+def new_cookie(config, now, *, owner=False):
     body = secrets.token_urlsafe(32) + "." + str(int(now))
-    signature = hmac.new(
-        config.cookie_secret.encode(), body.encode(), hashlib.sha256
-    ).hexdigest()
+    key = config.owner_access_key if owner else config.cookie_secret
+    signature = hmac.new(key.encode(), body.encode(), hashlib.sha256).hexdigest()
     return body + "." + signature
 
 
-def cookie_owner(config, token, now):
-    if not token or not re.fullmatch(r"[\w-]{43}\.\d{10}\.[a-f0-9]{64}", token):
+def cookie_owner(config, token, now, *, owner=False):
+    key = config.owner_access_key if owner else config.cookie_secret
+    if (
+        not key
+        or not token
+        or not re.fullmatch(r"[\w-]{43}\.\d{10}\.[a-f0-9]{64}", token)
+    ):
         return None
 
     body, signature = token.rsplit(".", 1)
-    expected = hmac.new(
-        config.cookie_secret.encode(), body.encode(), hashlib.sha256
-    ).hexdigest()
+    expected = hmac.new(key.encode(), body.encode(), hashlib.sha256).hexdigest()
     issued = int(body.rsplit(".", 1)[1])
-    if (
-        not hmac.compare_digest(signature, expected)
-        or not 0 <= now - issued < config.retention_days * 86400
-    ):
+    max_age = OWNER_COOKIE_AGE if owner else config.retention_days * 86400
+    valid_age = 0 <= now - issued < max_age
+    if not hmac.compare_digest(signature, expected) or not valid_age:
         return None
     return hashlib.sha256(token.encode()).hexdigest()
 

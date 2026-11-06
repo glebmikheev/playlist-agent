@@ -100,9 +100,10 @@ Set the following in the service's environment/secrets section:
 | --- | --- |
 | `GOOGLE_CLOUD_PROJECT` | Your Firestore project ID |
 | `FIRESTORE_DATABASE` | `(default)`, unless you deliberately selected another database |
-| `PUBLIC_ORIGIN` | Exact HTTPS origin used by visitors, without a trailing slash, path or query |
+| `PUBLIC_ORIGIN` | Exact HTTPS origins used by visitors, separated by commas, without trailing slashes, paths or queries |
 | `GEMINI_MODEL` | Explicit model ID tested for your Gemini key |
 | `GEMINI_API_KEY`, `COOKIE_SECRET` | Secret references, not frontend values |
+| `OWNER_ACCESS_KEY` | Optional reference to a separate randomly generated secret |
 | `PROVIDER_RPM`, `PROVIDER_TPM`, `PROVIDER_RPD` | Your actual free project/model allowances; never guessed from another model |
 | `TRUSTED_XFF_HOPS` | Verified client-IP position from the right of `X-Forwarded-For`; see below |
 | `GEMINI_MAX_INPUT_TOKENS` | 24000 by default; may be lowered |
@@ -112,11 +113,29 @@ Set the following in the service's environment/secrets section:
 | `LOCAL_HTTP` | Leave absent or 0 on Cloud Run; 1 is refused there |
 
 The cookie is `__Host-playlist_guest`, with Secure, HttpOnly, SameSite=Lax,
-Path=/ and no Domain. POSTs also require the exact configured Origin and a custom
-same-origin request header. Avoid a cross-origin iframe for this demo. If you do
+Path=/ and no Domain. Each hostname has its own guest cookie. POSTs require an
+Origin from the configured list and a custom same-origin request header.
+Avoid a cross-origin iframe for this demo. If you do
 not know the service URL until a revision exists, keep public access disabled,
 then copy the URL from the Console and update `PUBLIC_ORIGIN` before testing.
 There is no fallback that trusts an arbitrary Host/Origin header.
+
+### Owner access
+
+Generate a separate key with `python -c "import secrets; print(secrets.token_urlsafe(32))"`.
+Save it in Secret Manager and grant the Cloud Run service account
+`roles/secretmanager.secretAccessor` on that secret. Reference a specific version
+as `OWNER_ACCESS_KEY`. After deploying, open the demo with `/#owner` and enter the
+key once. The server issues a signed HttpOnly cookie valid for eight hours on
+that hostname. Rotating the key invalidates existing owner cookies after deploying
+the new version. The existing guest cookie still identifies the conversations
+in that browser.
+
+Owner runs skip the public schedule, time windows, daily allowance, and guest
+and network generation quotas. The service allows up to four more total runs
+per Paris day when owner access is used, with a maximum of 24 across all users
+at the default configuration. These runs still use the shared token, provider,
+HTTP, and storage budgets and the single-run lease.
 
 ### Trusted client IP: verify the actual ingress path
 
@@ -136,7 +155,7 @@ anonymous quota identity. IPv4-mapped IPv6 is normalized, and native IPv6 uses a
 
 ## Implemented admission behavior
 
-- At most 20 newly admitted runs per Paris calendar day, distributed 4/3/4/3/4/2
+- At most 20 newly admitted guest runs per Paris calendar day, distributed 4/3/4/3/4/2
   over the agreed 07–10/10–13/13–16/16–19/19–22/22–00 windows. Closed 00–07.
 - Two charged runs per guest cookie lifetime. At most six started model runs per
   IP/network in a rolling eight-hour window, across different guest cookies.
@@ -146,7 +165,7 @@ anonymous quota identity. IPv4-mapped IPv6 is normalized, and native IPv6 uses a
 - Before admission reserve nine times the configured input+output token ceiling
   against both Paris-day and provider-day budgets (1,200,000 each by default).
   At the defaults that is 252,864 tokens. Known usage releases unused reservation;
-  missing usage remains conservatively charged. The 20-run count includes admitted
+  missing usage remains conservatively charged. The daily run counts include admitted
   failures to bound records and resource use; it is not refunded with the guest.
 - Before **each** provider attempt, check durable provider-minute/day limits.
   RPM/RPD conservatively count token-count and generation as two requests.

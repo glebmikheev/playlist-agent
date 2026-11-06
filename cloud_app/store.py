@@ -88,7 +88,16 @@ class FirestoreStore:
         self.atomic(operation)
 
     def admit(
-        self, owner, ip, request_id, fingerprint, session_id, now, new_session=False
+        self,
+        owner,
+        ip,
+        request_id,
+        fingerprint,
+        session_id,
+        now,
+        new_session=False,
+        *,
+        is_owner=False,
     ):
         run_ref = self.run_reference(owner, request_id)
 
@@ -112,7 +121,15 @@ class FirestoreStore:
                 raise PermissionError("Conversation unavailable.")
 
             day, provider_day = reserve(
-                board, self.config, owner, ip, run_ref.id, session_id, is_new, now
+                board,
+                self.config,
+                owner,
+                ip,
+                run_ref.id,
+                session_id,
+                is_new,
+                now,
+                is_owner=is_owner,
             )
             expires = now + self.config.retention_days * 86400
 
@@ -134,6 +151,7 @@ class FirestoreStore:
 
             run = {
                 "owner": owner,
+                "is_owner": is_owner,
                 "ip": ip,
                 "fingerprint": fingerprint,
                 "session_id": session_id,
@@ -248,15 +266,16 @@ class FirestoreStore:
             board["days"][run["day"]]["tokens"] -= release
             board["providers"][run["provider_day"]]["tokens"] -= release
 
-            guest = board["guests"].get(owner)
-            if not result.get("counts_toward_quota", False) and guest:
-                guest["used"] = max(0, guest["used"] - 1)
-            if not run["attempts"]:
-                board["ips"][run["ip"]] = [
-                    event
-                    for event in board["ips"].get(run["ip"], [])
-                    if event[0] != run_ref.id
-                ]
+            if not run.get("is_owner", False):
+                guest = board["guests"].get(owner)
+                if not result.get("counts_toward_quota", False) and guest:
+                    guest["used"] = max(0, guest["used"] - 1)
+                if not run["attempts"]:
+                    board["ips"][run["ip"]] = [
+                        event
+                        for event in board["ips"].get(run["ip"], [])
+                        if event[0] != run_ref.id
+                    ]
 
             if board.get("active_run") == run_ref.id:
                 board["active_until"] = 0

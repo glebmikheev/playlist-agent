@@ -4,6 +4,7 @@ from zoneinfo import ZoneInfo
 PARIS = ZoneInfo("Europe/Paris")
 PACIFIC = ZoneInfo("America/Los_Angeles")
 WINDOWS = ((7, 10, 4), (10, 13, 3), (13, 16, 4), (16, 19, 3), (19, 22, 4), (22, 24, 2))
+OWNER_RUN_HEADROOM = 4
 EXPLANATION = "This is a free, publicly hosted demo. Usage limits help keep it free and give other visitors a chance to try it too."
 
 
@@ -17,6 +18,7 @@ class Denied(Exception):
             "guest": "You have reached your guest demo limit.",
             "ip": "This network has reached its eight-hour demo limit. People sharing Wi-Fi or a VPN share this allowance.",
             "day": "Today's demo allowance has been used up, likely by earlier visitors.",
+            "capacity": "The service has reached its total daily run limit.",
             "window": "This time window's demo allowance has been used up.",
             "night": "Live generation is paused overnight to conserve the demo allowance.",
             "tokens": "The demo's AI usage budget has been reached.",
@@ -98,11 +100,13 @@ def prune(board, now):
     board["minute"] = [event for event in board["minute"] if event[0] > now - 60]
 
 
-def reserve(board, config, owner, ip, run_id, session_id, is_new, now):
+def reserve(
+    board, config, owner, ip, run_id, session_id, is_new, now, *, is_owner=False
+):
     prune(board, now)
     local, provider_day, day_reset, provider_reset, window = calendar(now)
 
-    if window is None:
+    if window is None and not is_owner:
         raise Denied("night", next_window(now))
     if board["active_until"] > now:
         raise Denied("busy", board["active_until"])
@@ -111,24 +115,33 @@ def reserve(board, config, owner, ip, run_id, session_id, is_new, now):
         local.date().isoformat(),
         {"runs": 0, "tokens": 0, "windows": {}, "expires": day_reset + 2 * 86400},
     )
-    guest = board["guests"].get(
-        owner,
-        {"used": 0, "sessions": [], "expires": now + config.retention_days * 86400},
-    )
-    events = board["ips"].get(ip, [])
-    if day["runs"] >= config.daily_runs:
-        raise Denied(
-            "day", datetime.fromtimestamp(day_reset, PARIS).replace(hour=7).timestamp()
+    owner_runs = day.get("owner_runs", 0)
+    if day["runs"] + owner_runs >= config.daily_runs + OWNER_RUN_HEADROOM:
+        raise Denied("capacity", day_reset)
+
+    events = []
+    guest = None
+    if not is_owner:
+        if day["runs"] >= config.daily_runs:
+            raise Denied(
+                "day",
+                datetime.fromtimestamp(day_reset, PARIS).replace(hour=7).timestamp(),
+            )
+        if day["windows"].get(str(window[0]), 0) >= window[2]:
+            raise Denied("window", next_window(now))
+
+        guest = board["guests"].get(
+            owner,
+            {"used": 0, "sessions": [], "expires": now + config.retention_days * 86400},
         )
-    window_key = str(window[0])
-    if day["windows"].get(window_key, 0) >= window[2]:
-        raise Denied("window", next_window(now))
-    if guest["used"] >= config.guest_runs:
-        raise Denied("guest", guest["expires"])
-    if is_new and len(guest["sessions"]) >= 3 * config.guest_runs:
-        raise Denied("guest", guest["expires"])
-    if len(events) >= 3 * config.guest_runs:
-        raise Denied("ip", events[0][1] + 8 * 3600)
+        if guest["used"] >= config.guest_runs or (
+            is_new and len(guest["sessions"]) >= 3 * config.guest_runs
+        ):
+            raise Denied("guest", guest["expires"])
+
+        events = board["ips"].get(ip, [])
+        if len(events) >= 3 * config.guest_runs:
+            raise Denied("ip", events[0][1] + 8 * 3600)
 
     provider = board["providers"].setdefault(
         provider_day,
@@ -144,14 +157,19 @@ def reserve(board, config, owner, ip, run_id, session_id, is_new, now):
     ) * 96 * 1024 + 1024**2 > config.storage_bytes:
         raise Denied("storage", status=503)
 
-    guest["used"] += 1
-    if is_new:
-        guest["sessions"].append(session_id)
-    board["guests"][owner] = guest
-    board["ips"][ip] = [*events, [run_id, now]]
-    day["runs"] += 1
+    if is_owner:
+        day["owner_runs"] = owner_runs + 1
+    else:
+        guest["used"] += 1
+        if is_new:
+            guest["sessions"].append(session_id)
+        board["guests"][owner] = guest
+        board["ips"][ip] = [*events, [run_id, now]]
+        day["runs"] += 1
+        window_key = str(window[0])
+        day["windows"][window_key] = day["windows"].get(window_key, 0) + 1
+
     day["tokens"] += config.run_reservation
-    day["windows"][window_key] = day["windows"].get(window_key, 0) + 1
     provider["tokens"] += config.run_reservation
     board["records"] += 1 + int(is_new)
     board["active_until"] = now + config.model.timeout_s + 30

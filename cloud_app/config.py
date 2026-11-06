@@ -25,29 +25,45 @@ class CloudSettings:
     retention_days: int = 7
     storage_bytes: int = 128 * 1024**2
     payload_bytes: int = 64 * 1024
+    owner_access_key: str = field(default="", repr=False)
+    allowed_origins: tuple[str, ...] = field(init=False)
 
     def __post_init__(self):
-        url = urlsplit(self.origin)
-        is_bare_origin = self.origin == f"{url.scheme}://{url.netloc}"
-        if (
-            url.scheme not in {"http", "https"}
-            or not url.netloc
-            or not is_bare_origin
-            or url.username
-        ):
-            raise ValueError(
-                "PUBLIC_ORIGIN must be a bare origin without a trailing slash."
-            )
-        if self.secure_cookie and url.scheme != "https":
-            raise ValueError("Production cookies require an HTTPS origin.")
-        if not self.secure_cookie and (
-            url.hostname not in {"127.0.0.1", "localhost", "testserver"}
-            or os.getenv("K_SERVICE")
-        ):
-            raise ValueError("Insecure cookies are restricted to local development.")
+        origins = tuple(origin.strip() for origin in self.origin.split(","))
+        for origin in origins:
+            url = urlsplit(origin)
+            is_bare_origin = origin == f"{url.scheme}://{url.netloc}"
+            if (
+                url.scheme not in {"http", "https"}
+                or not url.hostname
+                or not is_bare_origin
+                or url.username is not None
+                or "*" in url.netloc
+            ):
+                raise ValueError(
+                    "PUBLIC_ORIGIN must contain bare origins without trailing slashes."
+                )
+            if self.secure_cookie and url.scheme != "https":
+                raise ValueError("Production cookies require HTTPS origins.")
+            if not self.secure_cookie and (
+                url.hostname not in {"127.0.0.1", "localhost", "testserver"}
+                or os.getenv("K_SERVICE")
+            ):
+                raise ValueError(
+                    "Insecure cookies are restricted to local development."
+                )
+        object.__setattr__(self, "allowed_origins", origins)
+
         if len(self.cookie_secret) < 32 or not self.model.api_key:
             raise ValueError(
                 "A server cookie secret (32+ characters) and Gemini API key are required."
+            )
+        if self.owner_access_key and (
+            not 32 <= len(self.owner_access_key) <= 256
+            or self.owner_access_key in {self.cookie_secret, self.model.api_key}
+        ):
+            raise ValueError(
+                "OWNER_ACCESS_KEY must be a separate key of 32–256 characters."
             )
         if (
             not 1 <= self.daily_runs <= 20
@@ -117,4 +133,5 @@ class CloudSettings:
             database=os.getenv("FIRESTORE_DATABASE", "(default)"),
             trusted_xff_hops=int(os.getenv("TRUSTED_XFF_HOPS", "0")),
             secure_cookie=os.getenv("LOCAL_HTTP", "0") != "1",
+            owner_access_key=os.getenv("OWNER_ACCESS_KEY", ""),
         )

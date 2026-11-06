@@ -16,7 +16,7 @@
 
   <p class="notice">
     This is a free, publicly hosted demo. Usage limits help keep it free and give
-    other visitors a chance to try it too. Live generation is available
+    other visitors a chance to try it too. Guest generation is available
     07:00–00:00 Paris time.
   </p>
   <p class="privacy">
@@ -25,6 +25,13 @@
     content, connection IP and redacted request metadata.
   </p>
 
+  <form id="owner-access" method="post" hidden>
+    <label for="owner-key">Owner access key</label>
+    <input id="owner-key" type="password" maxlength="256" required>
+    <button type="submit">Unlock</button>
+    <p id="owner-status" role="status"></p>
+  </form>
+
   <nav aria-label="Conversations">
     <select id="sessions" aria-label="Saved conversations">
       <option value="">New conversation</option>
@@ -32,6 +39,7 @@
     <button id="open" type="button">Open</button>
     <button id="new" type="button">New conversation</button>
   </nav>
+
   <div class="layout">
     <section>
       <h2>Conversation</h2>

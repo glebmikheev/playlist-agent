@@ -1,6 +1,7 @@
 import asyncio
 import csv
 import hashlib
+import hmac
 import io
 import json
 import time
@@ -11,7 +12,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import HTMLResponse, JSONResponse, Response
 from google.api_core.exceptions import GoogleAPICallError, RetryError
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, SecretStr
 
 from playlist_agent.agent import run_agent
 from playlist_agent.catalogue import Catalogue
@@ -24,6 +25,7 @@ from .config import CloudSettings
 from .model import BudgetedGemini
 from .policy import EXPLANATION, Denied
 from .security import (
+    OWNER_COOKIE_AGE,
     TrafficGuard,
     audit,
     client_ip,
@@ -55,6 +57,10 @@ class GenerateRequest(BaseModel):
     session_id: uuid.UUID | None = None
     message: str = Field(min_length=1, max_length=2000)
     locked_ids: list[str] = Field(default_factory=list, max_length=100)
+
+
+class OwnerAccessRequest(BaseModel):
+    key: SecretStr = Field(max_length=256)
 
 
 class BodyLimit:
@@ -247,13 +253,12 @@ def create_app(config=None, store=None, model_factory=BudgetedGemini, clock=time
                 status_code=401,
             )
 
-        if (
-            is_api
-            and request.method == "POST"
-            and (
-                request.headers.get("origin") != config.origin
-                or request.headers.get("x-demo-request") != "1"
-            )
+        protected_post = request.method == "POST" and (
+            is_api or path == "/owner-access"
+        )
+        if protected_post and (
+            request.headers.get("origin") not in config.allowed_origins
+            or request.headers.get("x-demo-request") != "1"
         ):
             return JSONResponse(
                 {"message": "This request origin is not allowed."}, status_code=403
@@ -289,6 +294,26 @@ def create_app(config=None, store=None, model_factory=BudgetedGemini, clock=time
     @app.get("/", response_class=HTMLResponse)
     async def index():
         return HTMLResponse((ASSETS / "index.html").read_text(encoding="utf-8"))
+
+    @app.post("/owner-access")
+    async def unlock_owner(payload: OwnerAccessRequest):
+        if not config.owner_access_key:
+            raise HTTPException(404, "Owner access is disabled.")
+        submitted = payload.key.get_secret_value().encode()
+        if not hmac.compare_digest(submitted, config.owner_access_key.encode()):
+            raise HTTPException(403, "Invalid owner access key.")
+
+        response = JSONResponse({"message": "Owner access enabled for eight hours."})
+        response.set_cookie(
+            cookie_name(config, owner=True),
+            new_cookie(config, clock(), owner=True),
+            max_age=OWNER_COOKIE_AGE,
+            secure=config.secure_cookie,
+            httponly=True,
+            samesite="strict",
+            path="/",
+        )
+        return response
 
     @app.get("/assets/app.js")
     async def javascript():
@@ -397,6 +422,8 @@ def create_app(config=None, store=None, model_factory=BudgetedGemini, clock=time
             )
 
         fingerprint = hashlib.sha256(payload.model_dump_json().encode()).hexdigest()
+        owner_token = request.cookies.get(cookie_name(config, owner=True))
+        is_owner = cookie_owner(config, owner_token, now, owner=True) is not None
         try:
             run, fresh = await asyncio.to_thread(
                 store.admit,
@@ -407,6 +434,7 @@ def create_app(config=None, store=None, model_factory=BudgetedGemini, clock=time
                 session_id,
                 now,
                 payload.session_id is None,
+                is_owner=is_owner,
             )
         except ValueError as error:
             raise HTTPException(409, str(error)) from error

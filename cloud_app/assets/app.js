@@ -199,6 +199,33 @@ $("new").addEventListener("click", () => {
     "Describe a duration or track count and your musical preferences.";
 });
 
+function showOwnerAccess() {
+  $("owner-access").hidden = location.hash !== "#owner";
+}
+
+window.addEventListener("hashchange", showOwnerAccess);
+showOwnerAccess();
+
+$("owner-access").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const keyInput = $("owner-key");
+  const body = JSON.stringify({key: keyInput.value});
+  keyInput.value = "";
+  try {
+    const {data} = await api("/owner-access", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Demo-Request": "1",
+      },
+      body,
+    });
+    $("owner-status").textContent = data.message;
+  } catch (error) {
+    $("owner-status").textContent = error.message;
+  }
+});
+
 refreshSessions().catch((error) => {
   $("status").textContent = error.message;
 });
